@@ -1,0 +1,92 @@
+# Ralph Orchestrator Configuration
+# Hedge Fund Research Project
+# Docs: https://github.com/mikeyobrien/ralph-orchestrator
+
+cli:
+  backend: "claude"
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 50
+  max_runtime_seconds: 7200    # 2 hours max
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Core paths
+# ─────────────────────────────────────────────────────────────────────────────
+core:
+  scratchpad: ".ralph/scratchpad.md"
+  specs_dir: "./specs/"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backpressure Gates - Quality enforcement
+# These must pass before Ralph considers work complete
+# ─────────────────────────────────────────────────────────────────────────────
+backpressure:
+  # Python type checking with mypy
+  - name: "typecheck"
+    command: "mypy ."
+    on_failure: "reject"
+    message: "Type errors detected. Fix type errors before proceeding."
+
+  # Python linting with ruff
+  - name: "lint"
+    command: "ruff check ."
+    on_failure: "reject"
+    message: "Linting errors detected. Fix lint issues before proceeding."
+
+  # Unit tests with pytest
+  - name: "test"
+    command: "pytest tests/ -v"
+    on_failure: "reject"
+    message: "Unit tests failing. All tests must pass."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hat-Based Workflows (Multi-Agent Personas)
+# ─────────────────────────────────────────────────────────────────────────────
+hats:
+  # Architect designs the solution
+  architect:
+    name: "Architect"
+    description: "Designs clean, maintainable solutions focusing on data pipelines and research architecture"
+    triggers: ["task.new", "design.needed"]
+    publishes: ["design.complete", "design.blocked"]
+    prompt_suffix: |
+      You are the Architect. Design clean, maintainable solutions.
+      Focus on Python module structure, data pipelines, and API design.
+      When done, publish design.complete with implementation specs.
+
+  # Developer implements the code
+  developer:
+    name: "Developer"
+    description: "Implements features following designs using Python best practices"
+    triggers: ["design.complete", "implement.task"]
+    publishes: ["implement.done", "implement.blocked"]
+    prompt_suffix: |
+      You are the Developer. Implement features following the design.
+      Use Python best practices, proper type hints, and clean code patterns.
+      Write clean, testable code. When done, publish implement.done.
+
+  # Tester writes and runs tests
+  tester:
+    name: "Tester"
+    description: "Writes and runs comprehensive tests using pytest"
+    triggers: ["implement.done", "test.needed"]
+    publishes: ["test.passed", "test.failed"]
+    prompt_suffix: |
+      You are the Tester. Write comprehensive tests using pytest.
+      Cover happy paths, edge cases, and error handling.
+      Use fixtures and mocking where appropriate.
+      Run all tests and publish test.passed only when all pass.
+
+  # Reviewer ensures quality
+  reviewer:
+    name: "Reviewer"
+    description: "Reviews code for quality, security, and production-readiness"
+    triggers: ["test.passed", "review.request"]
+    publishes: ["review.approved", "review.changes_requested"]
+    prompt_suffix: |
+      You are the Reviewer. Check code quality, security, and best practices.
+      Verify type hints are correct and complete.
+      Ensure no debug prints or testing code remains.
+      Approve only production-ready code.
