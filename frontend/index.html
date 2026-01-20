@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Screener | Hedge Fund Research</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <span class="logo-text">HF</span>
+                <span class="logo-name">Research</span>
+            </div>
+            <nav class="nav-main">
+                <a href="#" class="nav-link">Home</a>
+                <a href="#" class="nav-link active">Screener</a>
+                <a href="#" class="nav-link">Maps</a>
+                <a href="#" class="nav-link">Charts</a>
+                <a href="#" class="nav-link">Portfolio</a>
+                <a href="#" class="nav-link">Backtest</a>
+                <a href="#" class="nav-link">News</a>
+            </nav>
+            <div class="header-actions">
+                <span class="market-status open">Market Open</span>
+                <span class="timestamp">Jan 18, 2026 10:32 AM EST</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Sub Navigation - Page-specific tabs -->
+    <nav class="sub-nav">
+        <div class="sub-nav-content">
+            <div class="sub-nav-tabs">
+                <button class="sub-tab active" data-section="overview">Overview</button>
+                <button class="sub-tab" data-section="valuation">Valuation</button>
+                <button class="sub-tab" data-section="performance">Performance</button>
+                <button class="sub-tab" data-section="technical">Technical</button>
+                <button class="sub-tab" data-section="charts">Charts</button>
+                <button class="sub-tab" data-section="tickers">Tickers</button>
+            </div>
+            <div class="sub-nav-actions">
+                <select class="index-select" id="index-select">
+                    <option value="SPX500">S&P 500</option>
+                    <option value="NDQ">NASDAQ 100</option>
+                    <option value="DJI">Dow Jones</option>
+                    <option value="RUA">Russell 3000</option>
+                </select>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Market Heatmap Section -->
+        <section class="heatmap-section">
+            <div class="heatmap-header">
+                <h2 class="section-title">S&P 500 Market Map</h2>
+                <div class="heatmap-controls">
+                    <div class="control-group">
+                        <label>Color by:</label>
+                        <select id="heatmap-color">
+                            <option value="change">Day Change</option>
+                            <option value="Perf.W">Week</option>
+                            <option value="Perf.1M">Month</option>
+                            <option value="Perf.3M">3 Months</option>
+                            <option value="Perf.6M">6 Months</option>
+                            <option value="Perf.YTD">YTD</option>
+                            <option value="Perf.Y">Year</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>Size by:</label>
+                        <select id="heatmap-size">
+                            <option value="market_cap_basic">Market Cap</option>
+                            <option value="number_of_employees">Employees</option>
+                            <option value="dividend_yield_recent">Dividend Yield</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>Group by:</label>
+                        <select id="heatmap-group">
+                            <option value="sector">Sector</option>
+                            <option value="no_group">None</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <!-- TradingView Stock Heatmap Widget -->
+            <div class="heatmap-container" id="tradingview-heatmap">
+                <div class="tradingview-widget-container">
+                    <div class="tradingview-widget-container__widget"></div>
+                    <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js" async>
+                    {
+                        "exchanges": [],
+                        "dataSource": "SPX500",
+                        "grouping": "sector",
+                        "blockSize": "market_cap_basic",
+                        "blockColor": "change",
+                        "locale": "en",
+                        "symbolUrl": "",
+                        "colorTheme": "dark",
+                        "hasTopBar": false,
+                        "isDataSetEnabled": false,
+                        "isZoomEnabled": true,
+                        "hasSymbolTooltip": true,
+                        "isMonoSize": false,
+                        "width": "100%",
+                        "height": "100%"
+                    }
+                    </script>
+                </div>
+            </div>
+        </section>
+
+        <!-- Screener Section -->
+        <section class="screener-section">
+            <!-- Filter Tabs -->
+            <div class="filter-tabs">
+                <button class="tab active" data-tab="descriptive">Descriptive</button>
+                <button class="tab" data-tab="fundamental">Fundamental</button>
+                <button class="tab" data-tab="technical">Technical</button>
+                <button class="tab" data-tab="social">Social</button>
+                <button class="tab" data-tab="all">All</button>
+                <div class="filter-tabs-actions">
+                    <button class="btn btn-small btn-primary" id="btn-screen">
+                        <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+                        </svg>
+                        Screen
+                    </button>
+                    <button class="btn btn-small btn-secondary" id="btn-reset">Reset</button>
+                </div>
+            </div>
+
+            <!-- Filters Section -->
+            <div class="filters-section" id="filters">
+                <!-- Descriptive Filters -->
+                <div class="filter-group" data-group="descriptive">
+                    <div class="filter-row">
+                        <div class="filter-item">
+                            <label>Exchange</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="nyse">NYSE</option>
+                                <option value="nasdaq">NASDAQ</option>
+                                <option value="amex">AMEX</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Index</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="sp500" selected>S&P 500</option>
+                                <option value="djia">DJIA</option>
+                                <option value="nasdaq100">NASDAQ 100</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Sector</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="technology">Technology</option>
+                                <option value="healthcare">Healthcare</option>
+                                <option value="financials">Financials</option>
+                                <option value="consumer">Consumer Cyclical</option>
+                                <option value="industrials">Industrials</option>
+                                <option value="energy">Energy</option>
+                                <option value="utilities">Utilities</option>
+                                <option value="materials">Materials</option>
+                                <option value="realestate">Real Estate</option>
+                                <option value="communication">Communication</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Industry</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="software">Software</option>
+                                <option value="semiconductors">Semiconductors</option>
+                                <option value="banks">Banks</option>
+                                <option value="biotech">Biotechnology</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Country</label>
+                            <select>
+                                <option value="usa" selected>USA</option>
+                                <option value="china">China</option>
+                                <option value="canada">Canada</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Market Cap</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="mega">Mega ($200B+)</option>
+                                <option value="large">Large ($10B-$200B)</option>
+                                <option value="mid">Mid ($2B-$10B)</option>
+                                <option value="small">Small ($300M-$2B)</option>
+                                <option value="micro">Micro ($50M-$300M)</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Avg Volume</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="over1m">Over 1M</option>
+                                <option value="over500k">Over 500K</option>
+                                <option value="over100k">Over 100K</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Price</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="over50">Over $50</option>
+                                <option value="over20">Over $20</option>
+                                <option value="over10">Over $10</option>
+                                <option value="under50">Under $50</option>
+                                <option value="under20">Under $20</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Fundamental Filters -->
+                <div class="filter-group" data-group="fundamental">
+                    <div class="filter-row">
+                        <div class="filter-item">
+                            <label>P/E</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="low">Low (&lt;15)</option>
+                                <option value="under20">Under 20</option>
+                                <option value="under50">Under 50</option>
+                                <option value="profitable">Profitable (&gt;0)</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Forward P/E</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="low">Low (&lt;15)</option>
+                                <option value="under20">Under 20</option>
+                                <option value="under50">Under 50</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>PEG</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="low">Low (&lt;1)</option>
+                                <option value="under2">Under 2</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>P/S</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="low">Low (&lt;2)</option>
+                                <option value="under5">Under 5</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>P/B</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="low">Low (&lt;1)</option>
+                                <option value="under3">Under 3</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>EPS Growth</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="pos">Positive (&gt;0%)</option>
+                                <option value="over10">Over 10%</option>
+                                <option value="over25">Over 25%</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>ROE</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="pos">Positive (&gt;0%)</option>
+                                <option value="over10">Over 10%</option>
+                                <option value="over20">Over 20%</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Dividend</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="pos">Positive (&gt;0%)</option>
+                                <option value="over2">Over 2%</option>
+                                <option value="over5">Over 5%</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Technical Filters -->
+                <div class="filter-group" data-group="technical">
+                    <div class="filter-row">
+                        <div class="filter-item">
+                            <label>Performance</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="today_up">Today Up</option>
+                                <option value="week_up">Week Up</option>
+                                <option value="month_up">Month Up</option>
+                                <option value="quarter_up">Quarter Up</option>
+                                <option value="year_up">Year Up</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Volatility</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="week_over3">Week Over 3%</option>
+                                <option value="week_over5">Week Over 5%</option>
+                                <option value="month_over5">Month Over 5%</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>RSI (14)</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="oversold">Oversold (&lt;30)</option>
+                                <option value="overbought">Overbought (&gt;70)</option>
+                                <option value="neutral">Neutral (30-70)</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>20-Day SMA</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="above">Price Above SMA20</option>
+                                <option value="below">Price Below SMA20</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>50-Day SMA</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="above">Price Above SMA50</option>
+                                <option value="below">Price Below SMA50</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>200-Day SMA</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="above">Price Above SMA200</option>
+                                <option value="below">Price Below SMA200</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>52W High/Low</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="new_high">New High</option>
+                                <option value="new_low">New Low</option>
+                                <option value="within_5_high">Within 5% of High</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Pattern</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="horizontal">Horizontal S/R</option>
+                                <option value="ascending">Ascending Triangle</option>
+                                <option value="descending">Descending Triangle</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Social Filters -->
+                <div class="filter-group" data-group="social">
+                    <div class="filter-row">
+                        <div class="filter-item">
+                            <label>StockTwits Sentiment</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="bullish">Bullish (&gt;60%)</option>
+                                <option value="very_bullish">Very Bullish (&gt;75%)</option>
+                                <option value="bearish">Bearish (&lt;40%)</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Mention Volume</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="high">High (&gt;2x avg)</option>
+                                <option value="very_high">Very High (&gt;5x avg)</option>
+                                <option value="trending">Trending</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Social Score</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="high">High (&gt;70)</option>
+                                <option value="very_high">Very High (&gt;85)</option>
+                            </select>
+                        </div>
+                        <div class="filter-item">
+                            <label>Attention Change</label>
+                            <select>
+                                <option value="">Any</option>
+                                <option value="increasing">Increasing</option>
+                                <option value="decreasing">Decreasing</option>
+                                <option value="spike">Spike (&gt;100%)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Results Section -->
+        <section class="results-section">
+            <!-- Results Header -->
+            <div class="results-header">
+                <div class="results-info">
+                    <span class="results-count">247 results</span>
+                    <span class="results-universe">S&P 500 Universe</span>
+                </div>
+                <div class="results-actions">
+                    <div class="view-toggle">
+                        <button class="view-btn active" data-view="overview" title="Overview">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/></svg>
+                        </button>
+                        <button class="view-btn" data-view="valuation" title="Valuation">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"/><path fill-rule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clip-rule="evenodd"/></svg>
+                        </button>
+                        <button class="view-btn" data-view="performance" title="Performance">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11.707 4.707a1 1 0 00-1.414-1.414L10 9.586 8.707 8.293a1 1 0 00-1.414 0l-2 2a1 1 0 101.414 1.414L8 10.414l1.293 1.293a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+                        </button>
+                        <button class="view-btn" data-view="technical" title="Technical">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/></svg>
+                        </button>
+                    </div>
+                    <button class="btn btn-small" id="btn-export">
+                        <svg class="icon" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                        </svg>
+                        Export
+                    </button>
+                </div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="table-container">
+                <table class="data-table" id="results-table">
+                    <thead>
+                        <tr>
+                            <th class="sortable" data-sort="no">No.</th>
+                            <th class="sortable" data-sort="ticker">Ticker</th>
+                            <th class="sortable" data-sort="company">Company</th>
+                            <th class="sortable" data-sort="sector">Sector</th>
+                            <th class="sortable sorted-desc" data-sort="marketcap">Market Cap</th>
+                            <th class="sortable" data-sort="pe">P/E</th>
+                            <th class="sortable" data-sort="price">Price</th>
+                            <th class="sortable" data-sort="change">Change</th>
+                            <th class="sortable" data-sort="volume">Volume</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="cell-number">1</td>
+                            <td class="cell-ticker"><a href="#">AAPL</a></td>
+                            <td class="cell-company">Apple Inc.</td>
+                            <td class="cell-sector">Technology</td>
+                            <td class="cell-number">3.42T</td>
+                            <td class="cell-number">31.24</td>
+                            <td class="cell-number">227.63</td>
+                            <td class="cell-change positive">+2.34%</td>
+                            <td class="cell-number">52.4M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">2</td>
+                            <td class="cell-ticker"><a href="#">MSFT</a></td>
+                            <td class="cell-company">Microsoft Corporation</td>
+                            <td class="cell-sector">Technology</td>
+                            <td class="cell-number">3.12T</td>
+                            <td class="cell-number">35.67</td>
+                            <td class="cell-number">419.72</td>
+                            <td class="cell-change positive">+1.87%</td>
+                            <td class="cell-number">21.3M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">3</td>
+                            <td class="cell-ticker"><a href="#">NVDA</a></td>
+                            <td class="cell-company">NVIDIA Corporation</td>
+                            <td class="cell-sector">Technology</td>
+                            <td class="cell-number">2.98T</td>
+                            <td class="cell-number">62.41</td>
+                            <td class="cell-number">121.45</td>
+                            <td class="cell-change positive">+4.52%</td>
+                            <td class="cell-number">312.8M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">4</td>
+                            <td class="cell-ticker"><a href="#">GOOGL</a></td>
+                            <td class="cell-company">Alphabet Inc.</td>
+                            <td class="cell-sector">Communication</td>
+                            <td class="cell-number">2.21T</td>
+                            <td class="cell-number">25.89</td>
+                            <td class="cell-number">178.34</td>
+                            <td class="cell-change positive">+0.93%</td>
+                            <td class="cell-number">18.7M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">5</td>
+                            <td class="cell-ticker"><a href="#">AMZN</a></td>
+                            <td class="cell-company">Amazon.com, Inc.</td>
+                            <td class="cell-sector">Consumer Cyclical</td>
+                            <td class="cell-number">2.08T</td>
+                            <td class="cell-number">58.23</td>
+                            <td class="cell-number">197.12</td>
+                            <td class="cell-change negative">-0.45%</td>
+                            <td class="cell-number">34.2M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">6</td>
+                            <td class="cell-ticker"><a href="#">META</a></td>
+                            <td class="cell-company">Meta Platforms, Inc.</td>
+                            <td class="cell-sector">Communication</td>
+                            <td class="cell-number">1.52T</td>
+                            <td class="cell-number">28.94</td>
+                            <td class="cell-number">598.45</td>
+                            <td class="cell-change positive">+1.24%</td>
+                            <td class="cell-number">14.8M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">7</td>
+                            <td class="cell-ticker"><a href="#">BRK.B</a></td>
+                            <td class="cell-company">Berkshire Hathaway Inc.</td>
+                            <td class="cell-sector">Financials</td>
+                            <td class="cell-number">1.02T</td>
+                            <td class="cell-number">10.23</td>
+                            <td class="cell-number">471.89</td>
+                            <td class="cell-change positive">+0.34%</td>
+                            <td class="cell-number">3.2M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">8</td>
+                            <td class="cell-ticker"><a href="#">LLY</a></td>
+                            <td class="cell-company">Eli Lilly and Company</td>
+                            <td class="cell-sector">Healthcare</td>
+                            <td class="cell-number">798.4B</td>
+                            <td class="cell-number">124.56</td>
+                            <td class="cell-number">839.21</td>
+                            <td class="cell-change negative">-1.23%</td>
+                            <td class="cell-number">2.8M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">9</td>
+                            <td class="cell-ticker"><a href="#">TSLA</a></td>
+                            <td class="cell-company">Tesla, Inc.</td>
+                            <td class="cell-sector">Consumer Cyclical</td>
+                            <td class="cell-number">782.1B</td>
+                            <td class="cell-number">68.92</td>
+                            <td class="cell-number">245.67</td>
+                            <td class="cell-change positive">+3.78%</td>
+                            <td class="cell-number">98.4M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">10</td>
+                            <td class="cell-ticker"><a href="#">V</a></td>
+                            <td class="cell-company">Visa Inc.</td>
+                            <td class="cell-sector">Financials</td>
+                            <td class="cell-number">612.3B</td>
+                            <td class="cell-number">32.14</td>
+                            <td class="cell-number">312.45</td>
+                            <td class="cell-change positive">+0.89%</td>
+                            <td class="cell-number">5.6M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">11</td>
+                            <td class="cell-ticker"><a href="#">JPM</a></td>
+                            <td class="cell-company">JPMorgan Chase & Co.</td>
+                            <td class="cell-sector">Financials</td>
+                            <td class="cell-number">598.7B</td>
+                            <td class="cell-number">12.45</td>
+                            <td class="cell-number">208.34</td>
+                            <td class="cell-change positive">+1.12%</td>
+                            <td class="cell-number">8.9M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">12</td>
+                            <td class="cell-ticker"><a href="#">WMT</a></td>
+                            <td class="cell-company">Walmart Inc.</td>
+                            <td class="cell-sector">Consumer Defensive</td>
+                            <td class="cell-number">582.4B</td>
+                            <td class="cell-number">38.76</td>
+                            <td class="cell-number">172.89</td>
+                            <td class="cell-change negative">-0.21%</td>
+                            <td class="cell-number">6.4M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">13</td>
+                            <td class="cell-ticker"><a href="#">UNH</a></td>
+                            <td class="cell-company">UnitedHealth Group Inc.</td>
+                            <td class="cell-sector">Healthcare</td>
+                            <td class="cell-number">512.8B</td>
+                            <td class="cell-number">21.34</td>
+                            <td class="cell-number">554.67</td>
+                            <td class="cell-change positive">+0.67%</td>
+                            <td class="cell-number">2.1M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">14</td>
+                            <td class="cell-ticker"><a href="#">XOM</a></td>
+                            <td class="cell-company">Exxon Mobil Corporation</td>
+                            <td class="cell-sector">Energy</td>
+                            <td class="cell-number">487.2B</td>
+                            <td class="cell-number">14.23</td>
+                            <td class="cell-number">109.45</td>
+                            <td class="cell-change negative">-0.98%</td>
+                            <td class="cell-number">12.3M</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-number">15</td>
+                            <td class="cell-ticker"><a href="#">MA</a></td>
+                            <td class="cell-company">Mastercard Incorporated</td>
+                            <td class="cell-sector">Financials</td>
+                            <td class="cell-number">478.9B</td>
+                            <td class="cell-number">36.78</td>
+                            <td class="cell-number">512.34</td>
+                            <td class="cell-change positive">+0.54%</td>
+                            <td class="cell-number">2.4M</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            <div class="pagination">
+                <div class="pagination-info">
+                    Showing 1-15 of 247 results
+                </div>
+                <div class="pagination-controls">
+                    <button class="page-btn" disabled>
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                    </button>
+                    <button class="page-btn active">1</button>
+                    <button class="page-btn">2</button>
+                    <button class="page-btn">3</button>
+                    <button class="page-btn">4</button>
+                    <span class="page-ellipsis">...</span>
+                    <button class="page-btn">17</button>
+                    <button class="page-btn">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
+                    </button>
+                </div>
+                <div class="pagination-size">
+                    <label>Show:</label>
+                    <select id="page-size">
+                        <option value="15" selected>15</option>
+                        <option value="20">20</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-left">
+                <span>Hedge Fund Research System</span>
+                <span class="separator">|</span>
+                <span>Data: Yahoo Finance, StockTwits</span>
+                <span class="separator">|</span>
+                <span>Heatmap: TradingView</span>
+            </div>
+            <div class="footer-right">
+                <span>Last updated: Jan 18, 2026 10:32:15 AM</span>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/screener.js"></script>
+</body>
+</html>
