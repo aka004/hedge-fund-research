@@ -35,3 +35,7 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_functions = "test_*"
 addopts = "-v --tb=short"
+markers = [
+    "smoke: quick validation tests (5 key symbols, fast)",
+    "universe: full S&P 500 coverage tests (slow, hits API)",
+]

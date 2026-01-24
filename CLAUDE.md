@@ -207,6 +207,52 @@ This project may benefit from:
 
 - `context7` - Look up pandas/numpy/yfinance documentation
 
+## Testing Workflow
+
+### Simplified Alpha Testing
+
+Two-phase testing separates data validation from alpha logic:
+
+#### Phase 1: Data Fetch Tests (No Alpha Required)
+Validates that agents can get all required data before implementing strategies.
+
+```bash
+# Quick smoke test (5 key symbols)
+pytest tests/test_data_fetch.py -v -m smoke
+
+# Full universe coverage test
+pytest tests/test_data_fetch.py -v -m universe
+
+# Generate data availability report
+pytest tests/test_data_fetch.py::TestDataReport -v -s
+```
+
+**What it validates:**
+- Yahoo Finance API is reachable
+- Required columns exist (date, OHLCV, adj_close)
+- Sufficient history (7+ years for momentum)
+- Data quality (no zeros, no negatives, proper OHLC ordering)
+- Momentum calculation feasibility (12-1 month returns)
+- 200-day MA calculation feasibility
+
+#### Phase 2: Alpha Tests (Strategy Logic)
+After Phase 1 passes, test the actual alpha generation.
+
+```bash
+# Run signal generation tests
+pytest tests/test_signals.py -v
+
+# Run backtest tests
+pytest tests/test_backtest.py -v
+```
+
+### Test Markers
+
+| Marker | Purpose | Speed |
+|--------|---------|-------|
+| `smoke` | Quick validation (5 symbols) | Fast |
+| `universe` | Full S&P 500 coverage | Slow |
+
 ## Commands
 
 ```bash
