@@ -117,51 +117,78 @@ analysis/           # Performance metrics
 notebooks/          # Research exploration
 ```
 
-## Multi-Agent Workflows
+## Multi-Agent Alpha Testing Workflow
 
-This project uses ralph-tui for multi-agent orchestration.
+Event-driven multi-agent workflow for testing alpha generation strategies.
 
-### Available Presets
+### Agents and AFML Responsibilities
 
-| Preset | Command | Purpose |
-|--------|---------|---------|
-| `alpha-testing.yml` | `ralph run --preset presets/alpha-testing.yml` | Test alpha generation with data pipeline coordination |
-| `afml-consensus.yml` | `ralph run --preset presets/afml-consensus.yml` | Multi-agent consensus meeting for architecture |
+| Agent | AFML Techniques | Role |
+|-------|-----------------|------|
+| **Momentum Researcher** | `triple_barrier()`, `regime_200ma()` | Generate alpha signals |
+| **Backtest Unit** | `purged_kfold()` | Validate with CV |
+| **Statistical Agent** | `deflated_sharpe()`, `sample_uniqueness()` | Compute PSR, approve/reject |
+| **Project Manager** | - | Evaluate data requests, coordinate |
+| **Data Pipeline Agent** | - | Implement data fetching |
+| **Scribe** | - | Record all events |
 
-### Alpha Testing Workflow
+### Complete Event Flow
 
+#### Main Flow (Alpha Validation)
 ```
-┌─────────────────────┐
-│ Momentum Researcher │ ─── tests alpha generation
-└─────────┬───────────┘
-          │ data.missing
-          ▼
-┌─────────────────────┐
-│   Project Manager   │ ─── evaluates request
-└─────────┬───────────┘
-          │ pm.approved
-          ▼
-┌─────────────────────┐
-│ Data Pipeline Agent │ ─── implements data fetch
-└─────────┬───────────┘
-          │ data.available
-          ▼
-┌─────────────────────┐
-│ Momentum Researcher │ ─── retries with new data
-└─────────────────────┘
+Momentum Researcher
+  │ alpha.ready
+  ▼
+Backtest Unit ───────── purged k-fold validation
+  │ backtest.passed
+  ▼
+Statistical Agent ────── PSR check (>= 0.95?)
+  ├── alpha.success ──→ ✅ DONE
+  └── alpha.rejected ──→ Momentum Researcher (adjust strategy)
 ```
 
-**Agents:**
-- **Momentum Researcher**: Generates alpha signals, reports missing data
-- **Project Manager**: Evaluates if requests fit project scope, approves/rejects
-- **Data Pipeline Agent**: Implements data fetching capabilities
+#### Side Flow: Data Requests (When data.missing)
+```
+Any Agent
+  │ data.missing
+  ▼
+Project Manager ──────── evaluates request
+  ├── pm.approved ──→ Data Pipeline Agent → data.available → retry
+  │
+  └── pm.rejected ──→ Momentum Researcher
+                        │ alternative.proposed
+                        ▼
+                     HUMAN REVIEW (you decide)
+                        │ alternative.approved
+                        ▼
+                     Momentum Researcher (implement alternative)
+```
 
-**Agent Clearance (Data Pipeline):**
-- CAN add methods to existing providers
-- CAN add columns to Parquet files
-- CANNOT change base provider interface
-- CANNOT add dependencies without PM approval
-- CANNOT modify the AFML module
+### Agent Clearance Levels
+
+| Clearance | Agents | Can Do | Cannot Do |
+|-----------|--------|--------|-----------|
+| **Research** | Momentum Researcher | Read data, compute signals, propose alphas | Modify data pipeline |
+| **Validation** | Backtest Unit, Statistical Agent | Read data/signals, run validation | Change thresholds, modify pipeline |
+| **Infrastructure** | Project Manager, Scribe | Coordinate, log events | Modify data pipeline |
+| **Pipeline** | Data Pipeline Agent | Add provider methods, add Parquet columns | Change base interface, modify AFML |
+| **Admin** | Human (you) | Approve alternatives, final decisions | - |
+
+### Human Approval Gates
+
+| Event | What You Decide | When It Triggers |
+|-------|-----------------|------------------|
+| `alternative.proposed` | Approve/reject workaround approach | After PM rejects data request |
+
+### Zero Value Warnings
+
+**All agents MUST be cautious of 0 values:**
+- Price = 0 → Missing data
+- Volume = 0 → Trading halt or missing
+- Volatility = 0 → Impossible, missing data
+- Returns = 0 → Suspicious if widespread
+
+**Never use `fillna(0)` - keep NaN and log warnings.**
 
 ---
 
