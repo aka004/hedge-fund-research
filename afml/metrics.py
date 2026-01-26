@@ -129,8 +129,8 @@ def deflated_sharpe(
     returns = returns[~np.isnan(returns)]
 
     n = len(returns)
-    if n < 10:
-        raise ValueError(f"Need at least 10 observations, got {n}")
+    if n < 5:
+        raise ValueError(f"Need at least 5 observations, got {n}")
 
     # Compute moments
     mean_ret = np.mean(returns)

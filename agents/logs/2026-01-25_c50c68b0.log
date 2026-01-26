@@ -1,0 +1,28 @@
+================================================================================
+ALPHA TESTING WORKFLOW LOG
+Correlation ID: c50c68b0
+Started: 2026-01-25T02:14:10.205341
+================================================================================
+
+[02:14:10.205] momentum_researcher  | agent.started: {'agent': 'momentum_researcher'}
+[02:14:10.206] backtest_unit        | agent.started: {'agent': 'backtest_unit'}
+[02:14:10.207] statistical_agent    | agent.started: {'agent': 'statistical_agent'}
+[02:14:10.207] orchestrator         | system.start: {}
+[02:14:10.208] momentum_researcher  | DATA REQUEST from momentum_researcher: {'type': 'historical_prices', 'symbols': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'], 'years': 7}
+
+================================================================================
+SUMMARY
+================================================================================
+Duration: 0.0s
+Total events: 6
+
+Event counts:
+  agent.started: 4
+  data.missing: 1
+  system.start: 1
+================================================================================
+[02:14:10.208] scribe               | agent.stopped: {'agent': 'scribe'}
+[02:14:10.208] momentum_researcher  | agent.stopped: {'agent': 'momentum_researcher'}
+[02:14:10.209] backtest_unit        | agent.stopped: {'agent': 'backtest_unit'}
+[02:14:10.209] statistical_agent    | agent.stopped: {'agent': 'statistical_agent'}
+[02:14:10.210] orchestrator         | system.stop: {}

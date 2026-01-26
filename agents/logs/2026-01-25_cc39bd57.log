@@ -1,0 +1,20 @@
+================================================================================
+ALPHA TESTING WORKFLOW LOG
+Correlation ID: cc39bd57
+Started: 2026-01-25T02:26:54.762956
+================================================================================
+
+[02:26:54.763] momentum_researcher  | agent.started: {'agent': 'momentum_researcher'}
+[02:26:54.764] backtest_unit        | agent.started: {'agent': 'backtest_unit'}
+[02:26:54.764] statistical_agent    | agent.started: {'agent': 'statistical_agent'}
+[02:26:54.764] orchestrator         | system.start: {}
+[02:29:48.435] momentum_researcher  | ALPHA READY: momentum_12_1 (339 signals)
+[02:29:48.502] backtest_unit        | BACKTEST PASSED: 5 folds, avg return 0.59%
+[02:29:48.503] statistical_agent    | ALPHA ❌ REJECTED: PSR=0.000 (insufficient_observations: 5 < 10 required)
+[02:32:33.278] momentum_researcher  | ALPHA READY: momentum_12_1 (339 signals)
+[02:32:33.313] backtest_unit        | BACKTEST PASSED: 5 folds, avg return 0.59%
+[02:32:33.314] statistical_agent    | ALPHA ❌ REJECTED: PSR=0.000 (insufficient_observations: 5 < 10 required)
+[02:35:15.258] momentum_researcher  | ALPHA READY: momentum_12_1 (339 signals)
+[02:35:15.294] backtest_unit        | BACKTEST PASSED: 5 folds, avg return 0.59%
+[02:35:15.295] statistical_agent    | ALPHA ❌ REJECTED: PSR=0.000 (insufficient_observations: 5 < 10 required)
+[02:35:15.295] momentum_researcher  | workflow.complete: {'status': 'failed', 'reason': 'max_iterations_reached', 'iterations': 3}

@@ -1,0 +1,10 @@
+================================================================================
+ALPHA TESTING WORKFLOW LOG
+Correlation ID: 3242588b
+Started: 2026-01-25T11:32:20.303311
+================================================================================
+
+[11:32:20.303] momentum_researcher  | agent.started: {'agent': 'momentum_researcher'}
+[11:32:20.304] backtest_unit        | agent.started: {'agent': 'backtest_unit'}
+[11:32:20.304] statistical_agent    | agent.started: {'agent': 'statistical_agent'}
+[11:32:20.305] orchestrator         | system.start: {}

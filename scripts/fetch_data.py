@@ -29,6 +29,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from config import STORAGE_PATH
 from data.providers.yahoo import YahooFinanceProvider
 from data.storage.parquet import ParquetStorage
 from data.storage.universe import SP500_SYMBOLS
@@ -40,8 +41,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Default storage path
-DEFAULT_STORAGE_PATH = Path(__file__).parent.parent / "data" / "cache"
+# Default storage path (from config)
+DEFAULT_STORAGE_PATH = STORAGE_PATH
 
 
 class DataStatus:

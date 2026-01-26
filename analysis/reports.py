@@ -1,10 +1,16 @@
 """Report generation for backtest results."""
 
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
 from analysis.metrics import PerformanceMetrics
+from analysis.obsidian_reports import (
+    generate_backtest_report_obsidian,
+    save_obsidian_note,
+)
 from strategy.backtest.engine import BacktestResult
 
 
@@ -196,3 +202,66 @@ def save_report_bundle(
     saved_files["metrics"] = metrics_path
 
     return saved_files
+
+
+def save_obsidian_report(
+    result: BacktestResult,
+    metrics: PerformanceMetrics,
+    backtest_id: Optional[str] = None,
+    obsidian: bool = True,
+) -> Path:
+    """Save an Obsidian-formatted backtest report.
+    
+    Args:
+        result: Backtest result
+        metrics: Performance metrics
+        backtest_id: Optional backtest identifier
+        obsidian: If True, save to Obsidian vault (default: True)
+        
+    Returns:
+        Path to saved Obsidian note
+    """
+    if backtest_id is None:
+        backtest_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Convert result and metrics to dictionaries
+    result_dict = {
+        "start_date": str(result.start_date),
+        "end_date": str(result.end_date),
+        "initial_capital": result.config.initial_capital,
+        "final_equity": result.equity_curve["equity"].iloc[-1] if not result.equity_curve.empty else result.config.initial_capital,
+    }
+    
+    metrics_dict = {
+        "total_return": metrics.total_return,
+        "cagr": metrics.cagr,
+        "annualized_volatility": metrics.annualized_volatility,
+        "sharpe_ratio": metrics.sharpe_ratio,
+        "sortino_ratio": metrics.sortino_ratio,
+        "calmar_ratio": metrics.calmar_ratio,
+        "max_drawdown": metrics.max_drawdown,
+        "max_drawdown_duration_days": metrics.max_drawdown_duration_days,
+        "total_trades": metrics.total_trades,
+        "win_rate": metrics.win_rate,
+        "profit_factor": metrics.profit_factor,
+        "avg_win": metrics.avg_win,
+        "avg_loss": metrics.avg_loss,
+        "skewness": metrics.skewness,
+        "kurtosis": metrics.kurtosis,
+    }
+    
+    # Generate Obsidian content
+    obsidian_content = generate_backtest_report_obsidian(
+        result_dict,
+        metrics_dict,
+        backtest_id=backtest_id,
+    )
+    
+    # Save to Obsidian vault
+    obsidian_path = save_obsidian_note(
+        obsidian_content,
+        f"{backtest_id}-backtest.md",
+        subfolder="Research/Backtests",
+    )
+    
+    return obsidian_path

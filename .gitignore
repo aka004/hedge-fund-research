@@ -45,3 +45,6 @@ build/
 .env
 *.pem
 *.key
+
+# Obsidian vault (has its own git repo for GitHub Sync)
+obsidian-vault/

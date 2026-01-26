@@ -1,0 +1,35 @@
+================================================================================
+ALPHA TESTING WORKFLOW LOG
+Correlation ID: 853c3865
+Started: 2026-01-25T02:40:39.533451
+================================================================================
+
+[02:40:39.534] momentum_researcher  | agent.started: {'agent': 'momentum_researcher'}
+[02:40:39.534] backtest_unit        | agent.started: {'agent': 'backtest_unit'}
+[02:40:39.534] statistical_agent    | agent.started: {'agent': 'statistical_agent'}
+[02:40:39.535] orchestrator         | system.start: {}
+[02:43:20.774] momentum_researcher  | ALPHA READY: momentum_12_1 (339 signals)
+[02:43:20.811] backtest_unit        | BACKTEST PASSED: 5 folds, avg return 0.59%
+[02:43:20.817] statistical_agent    | ALPHA ✅ SUCCESS: PSR=1.000
+[02:45:57.885] momentum_researcher  | ALPHA READY: momentum_12_1 (339 signals)
+[02:45:57.922] backtest_unit        | BACKTEST PASSED: 5 folds, avg return 0.59%
+[02:45:57.924] statistical_agent    | ALPHA ✅ SUCCESS: PSR=0.999
+
+================================================================================
+SUMMARY
+================================================================================
+Duration: 318.4s
+Total events: 11
+
+Event counts:
+  agent.started: 4
+  alpha.ready: 2
+  alpha.success: 2
+  backtest.passed: 2
+  system.start: 1
+================================================================================
+[02:45:57.925] scribe               | agent.stopped: {'agent': 'scribe'}
+[02:45:57.925] momentum_researcher  | agent.stopped: {'agent': 'momentum_researcher'}
+[02:45:57.925] backtest_unit        | agent.stopped: {'agent': 'backtest_unit'}
+[02:45:57.926] statistical_agent    | agent.stopped: {'agent': 'statistical_agent'}
+[02:45:57.926] orchestrator         | system.stop: {}
