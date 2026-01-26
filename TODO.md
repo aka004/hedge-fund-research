@@ -162,9 +162,21 @@ _Log any blockers, decisions, or issues here:_
 | P2 | Quiver API integration (if paid) | [ ] | Low |
 | P3 | SEC EDGAR Form 4 parser | [ ] | Medium |
 
+### Macro Regime Indicators (Suggestions)
+
+| # | Indicator | Signal | Notes |
+|---|-----------|--------|-------|
+| M1 | Dow/Gold ratio | Regime change | Extremes = systemic shift (1929, 1973, 2008, 2026) |
+| M2 | SOFR volume | Banking stress | Drop then rise = bailout incoming |
+| M3 | Credit spreads | Stress vs rotation | Widening + gold rally = real stress |
+| M4 | Financials vs Defensives | Risk appetite | Relative strength divergence |
+
+Reference: https://x.com/FinanceLancelot/status/2015484376360829184
+
 ### References
 
 - Social arbitrage guide: https://x.com/investingluc/status/2015529292680269914
+- Dow/Gold macro thread: https://x.com/FinanceLancelot/status/2015484376360829184
 - Google Trends: trends.google.com
 - TikTok Trends: ads.tiktok.com/business/creativecenter
 - AltIndex: altindex.com
