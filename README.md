@@ -63,14 +63,36 @@ hedge-fund-research/
 
 ## Getting Started
 
+### Quick Setup
+
 ```bash
-# Create virtual environment
+# Create virtual environment (if not already created)
 python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
 
 # Install dependencies
 pip install -r requirements.txt
 
+# Activate environment (use the helper script)
+source activate.sh
+
+# Or manually:
+source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+```
+
+### Cursor/VSCode Integration
+
+The project is configured to automatically use the correct Python environment in Cursor:
+
+- **Python Interpreter**: Automatically set to `venv/bin/python3`
+- **Terminal**: Auto-activates virtual environment when opening terminal
+- **Testing**: Pytest configured and ready to use
+- **Jupyter**: Uses the project's virtual environment
+
+Just open the project in Cursor and it will automatically detect and use the `venv` environment.
+
+### First Run
+
+```bash
 # Download initial data
 python scripts/fetch_data.py --universe sp500 --years 5
 
