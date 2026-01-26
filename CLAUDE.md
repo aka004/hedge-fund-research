@@ -196,8 +196,12 @@ Project Manager ──────── evaluates request
 
 When working on this project, consider using:
 
-- `superpowers:test-driven-development` - Write tests before implementation
-- `superpowers:systematic-debugging` - Debug data issues methodically
+- `superpowers:test-driven-development` - Write tests before implementation (RED-GREEN-REFACTOR)
+- `superpowers:systematic-debugging` - Debug data issues methodically (4-phase root cause process)
+- `superpowers:brainstorm` - Interactive design refinement before coding
+- `superpowers:write-plan` - Create detailed implementation plans
+- `superpowers:execute-plan` - Execute plans in batches with checkpoints
+- `superpowers:requesting-code-review` - Review code against plan before completion
 - `testing` - Test strategy components
 - `review` - Review backtest code for bugs
 
