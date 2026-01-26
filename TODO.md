@@ -135,6 +135,43 @@ _Log any blockers, decisions, or issues here:_
 
 ---
 
+---
+
+## Phase 2: Social Sentiment & Alternative Data
+
+**Added:** 2026-01-26
+**Status:** TODO
+
+### Social Arbitrage Data Sources
+
+| # | Task | Status | Priority |
+|---|------|--------|----------|
+| S1 | Google Trends API provider | [ ] | High |
+| S2 | Reddit sentiment provider (enhance existing) | [ ] | High |
+| S3 | TikTok trend scraper | [ ] | Medium |
+| S4 | SimilarWeb API integration | [ ] | Medium |
+| S5 | AltIndex API integration | [ ] | Low |
+| S6 | Amazon Best Sellers scraper | [ ] | Low |
+| S7 | Glassdoor sentiment provider | [ ] | Low |
+
+### Congress/Political Trading
+
+| # | Task | Status | Priority |
+|---|------|--------|----------|
+| P1 | CapitolTrades scraper (browser-based) | [ ] | Low |
+| P2 | Quiver API integration (if paid) | [ ] | Low |
+| P3 | SEC EDGAR Form 4 parser | [ ] | Medium |
+
+### References
+
+- Social arbitrage guide: https://x.com/investingluc/status/2015529292680269914
+- Google Trends: trends.google.com
+- TikTok Trends: ads.tiktok.com/business/creativecenter
+- AltIndex: altindex.com
+- Key subreddits: r/Quant, r/wallstreetbets, r/stocks, r/ValueInvesting
+
+---
+
 ## Completion Signal
 
 **LOOP_COMPLETE**
