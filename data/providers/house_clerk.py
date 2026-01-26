@@ -23,8 +23,22 @@ class HouseClerkProvider(DataProvider):
     pre-parsed congressional trades. No API key needed.
     """
 
-    # Free JSON endpoint from House Stock Watcher community project
-    DATA_URL = "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json"
+    # Alternative free endpoints (try in order)
+    DATA_URLS = [
+        # Senate Stock Watcher GitHub raw
+        "https://raw.githubusercontent.com/jeromeku/senate-stock-watcher/main/data/all_transactions.json",
+        # Backup: local cache
+    ]
+    
+    # CapitolTrades politician IDs for common lookups
+    POLITICIAN_IDS = {
+        "pelosi": "P000197",
+        "nancy pelosi": "P000197",
+        "mcconnell": "M000355", 
+        "mitch mcconnell": "M000355",
+        "tuberville": "T000278",
+        "tommy tuberville": "T000278",
+    }
 
     def __init__(self, config: ProviderConfig | None = None) -> None:
         super().__init__(config)
@@ -75,12 +89,26 @@ class HouseClerkProvider(DataProvider):
             DataFrame with congressional trades
         """
         try:
-            logger.info("Fetching congressional trades from House Stock Watcher")
+            logger.info("Fetching congressional trades")
             
-            # Download JSON data
-            response = self.session.get(self.DATA_URL, timeout=30)
-            response.raise_for_status()
-            data = response.json()
+            data = None
+            
+            # Try each data source
+            for url in self.DATA_URLS:
+                try:
+                    response = self.session.get(url, timeout=30)
+                    response.raise_for_status()
+                    data = response.json()
+                    logger.info(f"Successfully fetched from {url}")
+                    break
+                except Exception as e:
+                    logger.warning(f"Failed to fetch from {url}: {e}")
+                    continue
+            
+            # If JSON sources failed, try scraping CapitolTrades
+            if data is None:
+                logger.info("JSON sources unavailable, trying CapitolTrades scrape")
+                data = self._scrape_capitol_trades(politician_name)
             
             if not data:
                 logger.warning("No data returned from House Stock Watcher")
@@ -173,6 +201,56 @@ class HouseClerkProvider(DataProvider):
         except Exception as e:
             logger.error(f"Error fetching congressional trades: {e}")
             raise
+
+    def _scrape_capitol_trades(self, politician_name: str | None = None) -> list[dict]:
+        """Scrape trade data from CapitolTrades.com as fallback.
+        
+        Args:
+            politician_name: Politician name to look up
+            
+        Returns:
+            List of trade dictionaries
+        """
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            logger.error("beautifulsoup4 not installed - cannot scrape CapitolTrades")
+            return []
+        
+        trades = []
+        
+        # Get politician ID
+        pol_id = None
+        if politician_name:
+            pol_key = politician_name.lower().strip()
+            pol_id = self.POLITICIAN_IDS.get(pol_key)
+        
+        if not pol_id:
+            logger.warning(f"Unknown politician: {politician_name}. Known: {list(self.POLITICIAN_IDS.keys())}")
+            return []
+        
+        try:
+            # Fetch politician page
+            url = f"https://www.capitoltrades.com/politicians/{pol_id}"
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            # Find trade table (structure may vary)
+            # CapitolTrades uses dynamic JS, so we get limited data from initial HTML
+            # For full data, would need browser automation or their API
+            
+            # Extract basic info visible in HTML
+            logger.info(f"Scraped CapitolTrades page for {politician_name}")
+            
+            # Return empty for now - full implementation would need JS rendering
+            # or reverse-engineering their API
+            return trades
+            
+        except Exception as e:
+            logger.error(f"Error scraping CapitolTrades: {e}")
+            return []
 
     def get_insider_trades(
         self,

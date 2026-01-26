@@ -137,6 +137,23 @@ _Log any blockers, decisions, or issues here:_
 
 ---
 
+## Code Quality & Bug Fixes
+
+**Added:** 2026-01-26
+**Source:** Book analysis reports (Pardo, AFML, MLAM, Chan)
+
+| # | Task | Status | Priority |
+|---|------|--------|----------|
+| B1 | Fix PSR benchmark formula (remove /sqrt(annualization)) | [ ] | High |
+| B2 | Add bi-directional purging to cross-validation | [ ] | High |
+| B3 | Add Walk-Forward Efficiency (WFE) metric | [ ] | High |
+| B4 | Add Marcenko-Pastur covariance denoising | [ ] | Medium |
+| B5 | Run backtests to generate actual metrics | [ ] | High |
+| B6 | Add expected_max_sharpe() for multiple testing correction | [ ] | Medium |
+| B7 | Add EWMA volatility estimation | [ ] | Low |
+
+---
+
 ## Phase 2: Social Sentiment & Alternative Data
 
 **Added:** 2026-01-26
