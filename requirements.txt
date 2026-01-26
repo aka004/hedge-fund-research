@@ -38,3 +38,6 @@ isort>=5.12.0
 # Utilities
 python-dotenv>=1.0.0
 tqdm>=4.66.0
+
+# Politician/Insider trading data (free, no API key needed)
+pyyaml>=6.0.0

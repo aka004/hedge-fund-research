@@ -13,8 +13,10 @@ import pandas as pd
 
 from agents.base import Agent, AgentConfig, Clearance
 from agents.events import Event, EventBus, EventType
+from data.providers.house_clerk import HouseClerkProvider
 from data.providers.yahoo import YahooFinanceProvider
 from data.storage.parquet import ParquetStorage
+from data.storage.politician_trades import PoliticianTradeStorage
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,9 @@ class DataPipelineAgent(Agent):
         
         # Initialize providers
         self.yahoo = YahooFinanceProvider()
+        self.house_clerk = HouseClerkProvider()  # Free, no API key needed
         self.storage = ParquetStorage(self.cache_path)
+        self.politician_storage = PoliticianTradeStorage(self.cache_path)
     
     @property
     def name(self) -> str:
@@ -148,7 +152,8 @@ class DataPipelineAgent(Agent):
         missing = []
         
         for symbol in symbols:
-            if self.storage.has_prices(symbol):
+            prices = self.storage.load_prices(symbol)
+            if prices is not None and not prices.empty:
                 cached.append(symbol)
             else:
                 missing.append(symbol)
@@ -157,4 +162,88 @@ class DataPipelineAgent(Agent):
             "cached": cached,
             "missing": missing,
             "cache_rate": len(cached) / len(symbols) if symbols else 0,
+        }
+    
+    def fetch_politician_trades(
+        self,
+        politician_name: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> dict:
+        """Fetch politician trades from free House Stock Watcher data.
+        
+        Args:
+            politician_name: Optional specific politician name, or None for all in watchlist
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+            
+        Returns:
+            Status dict with success, rows, and failed politicians
+        """
+        
+        import yaml
+        from config import POLITICIAN_WATCHLIST_PATH
+        
+        # Load politician watchlist
+        if not POLITICIAN_WATCHLIST_PATH.exists():
+            return {
+                "success": False,
+                "error": f"Politician watchlist not found: {POLITICIAN_WATCHLIST_PATH}",
+                "rows": 0,
+                "failed": [],
+            }
+        
+        with open(POLITICIAN_WATCHLIST_PATH) as f:
+            watchlist = yaml.safe_load(f)
+        
+        politicians = watchlist.get("politicians", [])
+        
+        # Filter to specific politician if requested
+        if politician_name:
+            politicians = [p for p in politicians if p.get("name") == politician_name]
+        
+        if not politicians:
+            return {
+                "success": False,
+                "error": "No politicians found matching criteria",
+                "rows": 0,
+                "failed": [],
+            }
+        
+        total_rows = 0
+        failed = []
+        
+        for politician in politicians:
+            pol_name = politician.get("name", "Unknown")
+            
+            try:
+                self.log(f"Fetching trades for {pol_name} from House Stock Watcher")
+                
+                # Fetch congressional trades (free, no API key needed)
+                trades_df = self.house_clerk.get_congressional_trades(
+                    politician_name=pol_name,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                
+                if not trades_df.empty:
+                    # Add politician name if not in dataframe
+                    if "politician_name" not in trades_df.columns:
+                        trades_df["politician_name"] = pol_name
+                    
+                    # Save to storage
+                    self.politician_storage.save_trades(pol_name, trades_df)
+                    total_rows += len(trades_df)
+                    self.log(f"Saved {len(trades_df)} trades for {pol_name}")
+                else:
+                    self.log(f"No trades found for {pol_name}", level="warning")
+                    
+            except Exception as e:
+                self.log(f"Failed to fetch trades for {pol_name}: {e}", level="error")
+                failed.append(pol_name)
+        
+        return {
+            "success": len(failed) < len(politicians),
+            "rows": total_rows,
+            "failed": failed,
         }

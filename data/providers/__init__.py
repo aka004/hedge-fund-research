@@ -12,6 +12,14 @@ __all__ = [
 
 # Optional providers - only available if dependencies are installed
 try:
+    from data.providers.house_clerk import HouseClerkProvider
+
+    __all__.append("HouseClerkProvider")
+except ImportError:
+    HouseClerkProvider = None  # type: ignore[misc, assignment]
+
+# Optional providers - only available if dependencies are installed
+try:
     from data.providers.finnhub import FinnhubProvider
 
     __all__.append("FinnhubProvider")

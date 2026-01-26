@@ -102,8 +102,33 @@ def get_log_level() -> str:
     return os.getenv("LOG_LEVEL", "INFO").upper()
 
 
+
+
+def get_politician_watchlist_path() -> Path:
+    """Get path to politician watchlist YAML file.
+    
+    Returns:
+        Path to politicians.yaml config file
+    """
+    return PROJECT_ROOT / "config" / "politicians.yaml"
+
+
+def get_politician_signal_lookback_days() -> int:
+    """Get number of days to look back for politician trades in signals.
+    
+    Reads from POLITICIAN_SIGNAL_LOOKBACK_DAYS environment variable,
+    defaults to 45 days (typical STOCK Act filing window).
+    
+    Returns:
+        Number of days to look back
+    """
+    return int(os.getenv("POLITICIAN_SIGNAL_LOOKBACK_DAYS", "45"))
+
+
 # Convenience constants
 STORAGE_PATH = get_storage_path()
 OBSIDIAN_VAULT_PATH = get_obsidian_vault_path()
 OBSIDIAN_PROJECT_PATH = get_obsidian_project_path()
 RESEARCH_PATH = PROJECT_ROOT / "research"
+POLITICIAN_WATCHLIST_PATH = get_politician_watchlist_path()
+POLITICIAN_SIGNAL_LOOKBACK_DAYS = get_politician_signal_lookback_days()

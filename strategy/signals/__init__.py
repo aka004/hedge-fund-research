@@ -15,3 +15,11 @@ __all__ = [
     "SignalCombiner",
     "SignalWeight",
 ]
+
+# Optional signals - only available if dependencies are installed
+try:
+    from strategy.signals.politician import PoliticianSignal
+
+    __all__.append("PoliticianSignal")
+except ImportError:
+    PoliticianSignal = None  # type: ignore[misc, assignment]

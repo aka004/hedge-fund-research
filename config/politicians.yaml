@@ -1,0 +1,48 @@
+# Politician Watchlist Configuration
+# Tracks stock trades by politicians for copy-trading signals
+#
+# Uses Quiver Quantitative API which aggregates STOCK Act disclosures
+# from House and Senate. No CIK needed - just politician names.
+#
+# Fields:
+#   name: Full name of politician (as it appears in Quiver database)
+#   role: Current or past role (e.g., "President", "Senator", "Representative")
+#   party: Political party (R, D, I)
+#   start_date: When to start tracking (YYYY-MM-DD)
+#   notes: Optional notes
+
+politicians:
+  # Trump Administration
+  # Note: Executive branch officials file OGE Form 278-T, not STOCK Act.
+  # Quiver may have limited data for executive branch.
+  
+  - name: "Donald J. Trump"
+    role: "President (2017-2021)"
+    party: "R"
+    start_date: "2017-01-20"
+    notes: "45th President - may have limited data in Quiver (files OGE Form 278-T)"
+
+  # Notorious Congressional Traders
+  # These are tracked via STOCK Act disclosures in Quiver
+  
+  - name: "Nancy Pelosi"
+    role: "Representative (CA-11)"
+    party: "D"
+    start_date: "1987-01-01"
+    notes: "Former Speaker of the House, known for active trading"
+
+  - name: "Richard Burr"
+    role: "Senator (NC)"
+    party: "R"
+    start_date: "2005-01-01"
+    notes: "Former Senator, investigated for insider trading"
+
+  - name: "Kelly Loeffler"
+    role: "Senator (GA, 2020-2021)"
+    party: "R"
+    start_date: "2020-01-01"
+    notes: "Former Senator, active trader"
+
+  # Add more politicians as needed
+  # Note: Use exact names as they appear in Quiver database
+  # Check Quiver dashboard: https://www.quiverquant.com/congresstrading/
