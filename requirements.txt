@@ -41,3 +41,7 @@ tqdm>=4.66.0
 
 # Politician/Insider trading data (free, no API key needed)
 pyyaml>=6.0.0
+
+# Research orchestrator (multi-agent research system)
+anthropic>=0.18.0
+rich>=13.0.0

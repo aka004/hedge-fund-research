@@ -125,6 +125,77 @@ def get_politician_signal_lookback_days() -> int:
     return int(os.getenv("POLITICIAN_SIGNAL_LOOKBACK_DAYS", "45"))
 
 
+# =============================================================================
+# RESEARCH ORCHESTRATOR CONFIGURATION
+# =============================================================================
+
+def get_anthropic_api_key() -> str:
+    """Get Anthropic API key for research orchestrator.
+    
+    Reads from ANTHROPIC_API_KEY environment variable.
+    Raises ValueError if not set.
+    
+    Returns:
+        Anthropic API key
+    """
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        raise ValueError(
+            "ANTHROPIC_API_KEY not set in .env file. "
+            "Get your API key from https://console.anthropic.com/"
+        )
+    return key
+
+
+def get_research_db_path() -> Path:
+    """Get path to research database (DuckDB).
+    
+    Stores fundamentals, filings, social metrics, and improvement backlog.
+    Defaults to DATA_STORAGE_PATH/research.duckdb if not set.
+    
+    Returns:
+        Path to research database file
+    """
+    env_path = os.getenv("RESEARCH_DB_PATH")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+    
+    # Default to storage path + research.duckdb
+    return get_storage_path() / "research.duckdb"
+
+
+def get_research_output_path() -> Path:
+    """Get research output directory.
+    
+    Where investment memos and agent outputs are saved.
+    Defaults to ./outputs/research if not set.
+    
+    Returns:
+        Path to research output directory
+    """
+    env_path = os.getenv("RESEARCH_OUTPUT_PATH")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+    
+    return PROJECT_ROOT / "outputs" / "research"
+
+
+def get_research_feedback_path() -> Path:
+    """Get feedback tracking directory.
+    
+    Stores improvement backlog and session history JSON files.
+    Defaults to ./feedback if not set.
+    
+    Returns:
+        Path to feedback directory
+    """
+    env_path = os.getenv("RESEARCH_FEEDBACK_PATH")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+    
+    return PROJECT_ROOT / "feedback"
+
+
 # Convenience constants
 STORAGE_PATH = get_storage_path()
 OBSIDIAN_VAULT_PATH = get_obsidian_vault_path()
@@ -132,3 +203,8 @@ OBSIDIAN_PROJECT_PATH = get_obsidian_project_path()
 RESEARCH_PATH = PROJECT_ROOT / "research"
 POLITICIAN_WATCHLIST_PATH = get_politician_watchlist_path()
 POLITICIAN_SIGNAL_LOOKBACK_DAYS = get_politician_signal_lookback_days()
+
+# Research orchestrator constants
+RESEARCH_DB_PATH = get_research_db_path()
+RESEARCH_OUTPUT_PATH = get_research_output_path()
+RESEARCH_FEEDBACK_PATH = get_research_feedback_path()

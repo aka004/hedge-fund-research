@@ -154,6 +154,67 @@ _Log any blockers, decisions, or issues here:_
 
 ---
 
+## AFML Implementation Stages
+
+**Added:** 2026-01-26
+**Source:** Revised AFML roadmap (Obsidian vault)
+**Full plan:** docs/plans/2026-01-26-AFML-implementation-roadmap.md
+
+### Current Status Summary
+
+| Stage | Description | Status |
+|-------|-------------|--------|
+| 0 | Foundation (scaffold, config, storage, providers) | COMPLETE |
+| 1 | Core Labeling (triple-barrier, volatility) | COMPLETE |
+| 2 | Sample Weights & Purged CV | COMPLETE |
+| 3 | Basic Signals & Backtest Engine | MOSTLY COMPLETE |
+| 4 | Advanced Metrics (PSR, DSR, WFE) | PARTIAL |
+| 5 | Bet Sizing & HRP Portfolio | PARTIAL |
+| 6 | Sequential Bootstrap & CPCV | NOT STARTED |
+| 7 | Entropy & Microstructure Features | NOT STARTED |
+| 8 | Regime Detection (CUSUM, SADF) | PARTIAL (needs audit) |
+| 9 | Meta-Labeling & Feature Importance | NOT STARTED |
+| 10 | Alternative Bars (dollar, volume, imbalance) | NOT STARTED |
+| 11 | Reporting & Full Pipeline | PARTIAL |
+
+### Files to Audit (Tomorrow)
+
+| File | Stage | Check Against |
+|------|-------|---------------|
+| afml/labels.py | 1 | AFML Ch. 3 |
+| afml/weights.py | 2 | AFML Ch. 4 |
+| afml/cv.py | 2 | AFML Ch. 7 |
+| afml/metrics.py | 4 | AFML Ch. 14 |
+| afml/portfolio.py | 5 | AFML Ch. 16 |
+| afml/regime.py | 8 | AFML Ch. 17 |
+
+### Missing Implementations (Priority Order)
+
+1. **Stage 4 (High)**
+   - Deflated Sharpe Ratio
+   - Walk-Forward Efficiency
+   - Runs statistics
+
+2. **Stage 6 (High)**
+   - Combinatorial Purged CV (CPCV)
+   - Sequential bootstrap
+
+3. **Stage 5 (Medium)**
+   - Kelly sizing
+   - Verify HRP implementation
+
+4. **Stage 1 (Medium)**
+   - Fractional differentiation
+   - ADF test integration
+
+5. **Stages 7-10 (Lower)**
+   - Entropy features
+   - Microstructure features
+   - Alternative bars
+   - Meta-labeling
+
+---
+
 ## Phase 2: Social Sentiment & Alternative Data
 
 **Added:** 2026-01-26
@@ -198,6 +259,87 @@ Reference: https://x.com/FinanceLancelot/status/2015484376360829184
 - TikTok Trends: ads.tiktok.com/business/creativecenter
 - AltIndex: altindex.com
 - Key subreddits: r/Quant, r/wallstreetbets, r/stocks, r/ValueInvesting
+
+---
+
+---
+
+## Phase 3: Multi-Agent Research Execution
+
+**Added:** 2026-01-26
+**Source:** 09-EXECUTION-GUIDE.md (hedge-fund-simulation)
+**Status:** PLANNED (for later implementation)
+
+This is a full multi-agent research orchestration system with 3 execution methods.
+
+### Execution Methods
+
+| Method | Description | Complexity |
+|--------|-------------|------------|
+| Manual with Claude | Copy-paste prompts in sequence | Low |
+| Python Orchestration | Script coordinates agents | Medium |
+| Full Automation | Scheduled research with feedback loop | High |
+
+### Components to Build
+
+| # | Component | Status | Priority |
+|---|-----------|--------|----------|
+| E1 | orchestrator.py - Main execution script | [ ] | High |
+| E2 | Agent modules (data, quant, risk, competitive, qualitative, synthesis) | [ ] | High |
+| E3 | Database queries.py helper | [ ] | Medium |
+| E4 | Prompt templates (00-08) | [ ] | Medium |
+| E5 | Feedback loop & improvement backlog | [ ] | Medium |
+| E6 | improvement_dashboard.py | [ ] | Low |
+| E7 | cron_research.py scheduler | [ ] | Low |
+
+### Database Schema Extensions
+
+```sql
+-- New tables needed
+CREATE TABLE improvement_backlog (
+    gap_id VARCHAR PRIMARY KEY,
+    description VARCHAR,
+    first_reported DATE,
+    sessions_impacted INT,
+    total_time_lost_minutes INT,
+    priority VARCHAR,
+    status VARCHAR,
+    resolution_date DATE
+);
+```
+
+### Key Features
+
+- **Database-first approach**: Check local data before external sources
+- **Continuous improvement loop**: Each session identifies data gaps
+- **Efficiency tracking**: Database hit rate, workaround time metrics
+- **Quality gates**: Coverage, E[TR], Skew, Margin of Safety, Quality Score
+
+### Directory Structure (Target)
+
+```
+research_system/
+├── orchestrator.py
+├── agents/
+│   ├── data_quality.py
+│   ├── data_agent.py
+│   ├── quant_agent.py
+│   ├── risk_agent.py
+│   ├── competitive_agent.py
+│   ├── qualitative_agent.py
+│   └── synthesis_agent.py
+├── database/
+│   ├── queries.py
+│   └── schema.sql
+├── prompts/
+│   └── (agent prompts)
+├── outputs/
+└── feedback/
+```
+
+### Reference
+
+Full guide: `hedge-fund-simulation/09-EXECUTION-GUIDE.md`
 
 ---
 

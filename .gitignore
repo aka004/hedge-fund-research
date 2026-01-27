@@ -29,7 +29,6 @@ Thumbs.db
 
 # Agent/orchestrator working files
 .agent/
-.ralph/
 
 # Testing
 .pytest_cache/
@@ -48,3 +47,7 @@ build/
 
 # Obsidian vault (has its own git repo for GitHub Sync)
 obsidian-vault/
+
+# Research orchestrator outputs (large, regeneratable)
+outputs/
+feedback/
