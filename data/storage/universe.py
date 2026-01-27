@@ -97,6 +97,101 @@ SP500_SYMBOLS = [
 ]
 # fmt: on
 
+# Major ETFs - Index, Sector, Factor, and Bond ETFs
+# fmt: off
+ETF_SYMBOLS = [
+    # Broad Market Index ETFs
+    "SPY", "IVV", "VOO",      # S&P 500
+    "QQQ", "QQQM",            # Nasdaq 100
+    "DIA",                    # Dow Jones
+    "IWM", "IWN", "IWO",      # Russell 2000 (total, value, growth)
+    "VTI", "ITOT",            # Total US Market
+    "VTV", "VUG",             # Value / Growth
+    "VB", "VBR", "VBK",       # Small Cap (total, value, growth)
+    # International
+    "EFA", "VEA", "IEFA",     # Developed Markets ex-US
+    "EEM", "VWO", "IEMG",     # Emerging Markets
+    "VXUS",                   # Total International
+    "FXI",                    # China Large-Cap
+    "EWJ",                    # Japan
+    "EWG",                    # Germany
+    "EWU",                    # UK
+    # Sector ETFs (SPDR Select Sector)
+    "XLK",                    # Technology
+    "XLF",                    # Financials
+    "XLV",                    # Health Care
+    "XLE",                    # Energy
+    "XLI",                    # Industrials
+    "XLY",                    # Consumer Discretionary
+    "XLP",                    # Consumer Staples
+    "XLU",                    # Utilities
+    "XLB",                    # Materials
+    "XLRE",                   # Real Estate
+    "XLC",                    # Communication Services
+    # Thematic / Industry
+    "ARKK", "ARKW", "ARKF",   # ARK Innovation, Internet, Fintech
+    "SMH", "SOXX",            # Semiconductors
+    "XBI", "IBB",             # Biotech
+    "XHB",                    # Homebuilders
+    "XRT",                    # Retail
+    "KRE",                    # Regional Banks
+    "XOP",                    # Oil & Gas Exploration
+    "TAN",                    # Solar
+    "ICLN",                   # Clean Energy
+    # Factor ETFs
+    "MTUM",                   # Momentum
+    "VLUE",                   # Value
+    "QUAL",                   # Quality
+    "SIZE",                   # Size
+    "USMV", "SPLV",           # Low Volatility
+    # Fixed Income
+    "AGG", "BND",             # Total Bond Market
+    "TLT", "IEF", "SHY",      # Treasuries (Long, Intermediate, Short)
+    "LQD",                    # Investment Grade Corporate
+    "HYG", "JNK",             # High Yield Corporate
+    "TIP",                    # TIPS (Inflation Protected)
+    "MUB",                    # Municipal Bonds
+    "EMB",                    # Emerging Market Bonds
+    # Leveraged / Inverse (use with caution)
+    "TQQQ", "SQQQ",           # 3x / -3x Nasdaq
+    "SPXL", "SPXS",           # 3x / -3x S&P 500
+    "UVXY", "SVXY",           # VIX related
+    # Volatility
+    "VXX",                    # VIX Short-Term Futures
+]
+# fmt: on
+
+# Commodity ETFs and Futures-based ETFs
+# fmt: off
+COMMODITY_SYMBOLS = [
+    # Precious Metals
+    "GLD", "IAU",             # Gold
+    "SLV",                    # Silver
+    "PPLT",                   # Platinum
+    "PALL",                   # Palladium
+    # Energy
+    "USO", "BNO",             # Crude Oil (WTI, Brent)
+    "UNG",                    # Natural Gas
+    "UGA",                    # Gasoline
+    # Agriculture
+    "DBA",                    # Agriculture Basket
+    "CORN",                   # Corn
+    "WEAT",                   # Wheat
+    "SOYB",                   # Soybeans
+    "CANE",                   # Sugar
+    "JO",                     # Coffee
+    "NIB",                    # Cocoa
+    # Industrial Metals
+    "DBB",                    # Base Metals Basket
+    "CPER",                   # Copper
+    # Broad Commodity
+    "DJP",                    # Bloomberg Commodity Index
+    "GSG",                    # S&P GSCI Commodity
+    "PDBC",                   # Diversified Commodity
+    "COM",                    # Direxion Auspice Broad Commodity
+]
+# fmt: on
+
 
 class UniverseManager:
     """Manages stock universes for backtesting."""
@@ -118,6 +213,38 @@ class UniverseManager:
         """
         return SP500_SYMBOLS.copy()
 
+    def get_etf_symbols(self) -> list[str]:
+        """Get major ETF symbols.
+
+        Returns:
+            List of ETF ticker symbols
+        """
+        return ETF_SYMBOLS.copy()
+
+    def get_commodity_symbols(self) -> list[str]:
+        """Get commodity ETF symbols.
+
+        Returns:
+            List of commodity ETF ticker symbols
+        """
+        return COMMODITY_SYMBOLS.copy()
+
+    def get_expanded_universe(self) -> list[str]:
+        """Get expanded universe: S&P 500 + ETFs + Commodities.
+
+        Returns:
+            List of all ticker symbols (deduplicated)
+        """
+        all_symbols = SP500_SYMBOLS + ETF_SYMBOLS + COMMODITY_SYMBOLS
+        # Deduplicate while preserving order
+        seen = set()
+        result = []
+        for s in all_symbols:
+            if s not in seen:
+                seen.add(s)
+                result.append(s)
+        return result
+
     def save_custom_universe(self, name: str, symbols: list[str]) -> None:
         """Save a custom universe.
 
@@ -134,14 +261,28 @@ class UniverseManager:
         """Load a universe by name.
 
         Args:
-            name: Universe name (use 'sp500' for S&P 500)
+            name: Universe name. Built-in options:
+                - 'sp500': S&P 500 stocks
+                - 'etfs': Major ETFs
+                - 'commodities': Commodity ETFs
+                - 'expanded': S&P 500 + ETFs + Commodities
 
         Returns:
             List of ticker symbols
         """
-        if name.lower() == "sp500":
-            return self.get_sp500_symbols()
+        name_lower = name.lower()
 
+        # Built-in universes
+        if name_lower == "sp500":
+            return self.get_sp500_symbols()
+        if name_lower in ("etfs", "etf"):
+            return self.get_etf_symbols()
+        if name_lower in ("commodities", "commodity"):
+            return self.get_commodity_symbols()
+        if name_lower == "expanded":
+            return self.get_expanded_universe()
+
+        # Custom universe from file
         file_path = self.storage_path / f"{name}.csv"
         if not file_path.exists():
             raise ValueError(f"Universe '{name}' not found")
@@ -155,7 +296,9 @@ class UniverseManager:
         Returns:
             List of universe names
         """
-        universes = ["sp500"]  # Built-in
+        # Built-in universes
+        universes = ["sp500", "etfs", "commodities", "expanded"]
+        # Custom universes from files
         universes.extend(f.stem for f in self.storage_path.glob("*.csv"))
         return universes
 
