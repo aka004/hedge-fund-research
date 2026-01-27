@@ -51,3 +51,4 @@ obsidian-vault/
 # Research orchestrator outputs (large, regeneratable)
 outputs/
 feedback/
+agents/logs/

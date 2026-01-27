@@ -1,5 +1,0 @@
-{"event_type": "agent.started", "source": "scribe", "timestamp": "2026-01-25T11:32:20.302790", "payload": {"agent": "scribe"}, "correlation_id": "3242588b"}
-{"event_type": "agent.started", "source": "momentum_researcher", "timestamp": "2026-01-25T11:32:20.303963", "payload": {"agent": "momentum_researcher"}, "correlation_id": "3242588b"}
-{"event_type": "agent.started", "source": "backtest_unit", "timestamp": "2026-01-25T11:32:20.304448", "payload": {"agent": "backtest_unit"}, "correlation_id": "3242588b"}
-{"event_type": "agent.started", "source": "statistical_agent", "timestamp": "2026-01-25T11:32:20.304840", "payload": {"agent": "statistical_agent"}, "correlation_id": "3242588b"}
-{"event_type": "system.start", "source": "orchestrator", "timestamp": "2026-01-25T11:32:20.305069", "payload": {}, "correlation_id": "3242588b"}
