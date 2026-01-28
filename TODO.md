@@ -343,6 +343,65 @@ Full guide: `hedge-fund-simulation/09-EXECUTION-GUIDE.md`
 
 ---
 
+---
+
+## Quant Department Integration (2026-01-27)
+
+### Priority: HIGH
+
+The orchestrator currently uses **arbitrary values** that should be derived from quantitative methods.
+
+### TODO Items
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| Q1 | Replace arbitrary scenario probabilities with quantitative methods | [ ] | Use historical distributions, implied vol, Monte Carlo |
+| Q2 | Derive skew ratio threshold (1.70) from portfolio theory | [ ] | Currently hardcoded |
+| Q3 | Derive margin of safety threshold (25%) from risk models | [ ] | Currently hardcoded |
+| Q4 | Calculate E[TR] from proper return distributions | [ ] | Not just weighted average of scenarios |
+| Q5 | Add options-implied probability estimation | [ ] | Use options chain for market expectations |
+| Q6 | Implement bootstrap confidence intervals | [ ] | For DCF and valuation ranges |
+
+### Arbitrary Values Identified (Audit Results)
+
+**In orchestrator.py / agent prompts:**
+
+| Value | Location | Current | Should Be |
+|-------|----------|---------|-----------|
+| Skew ratio threshold | 02-QUANT-AGENT | 1.70 | Derived from Sharpe ratio requirements |
+| Margin of safety | 02-QUANT-AGENT | 25% | Derived from volatility/VaR |
+| Bull/Base/Bear probabilities | 03-RISK-AGENT | Analyst judgment | Historical + implied vol |
+| E[TR] calculation | 02-QUANT-AGENT | Simple weighted avg | Proper expectation over distribution |
+| DCF terminal growth | 02-QUANT-AGENT | 2.5% | GDP growth estimates + industry |
+| Risk-free rate | 02-QUANT-AGENT | 4.2% | Current Treasury yield (live) |
+| Equity risk premium | 02-QUANT-AGENT | 5.5% | Damodaran or implied ERP |
+| Recovery time estimates | 03-RISK-AGENT | Arbitrary | Historical drawdown analysis |
+
+### Quantitative Methods to Implement
+
+1. **Probability Estimation:**
+   - Historical return distribution → percentile mapping
+   - GJR-GARCH for volatility → confidence intervals
+   - Options-implied PDF from put/call prices
+
+2. **Threshold Derivation:**
+   - Skew = f(target Sharpe, max drawdown tolerance)
+   - Margin of safety = f(volatility, liquidity, position size)
+
+3. **Return Modeling:**
+   - Proper expected return = integral over distribution
+   - Fat tails via Student-t or EVT
+   - Regime switching for bull/bear
+
+### Reference
+
+See AFML chapters:
+- Ch 5: Fractionally Differentiated Features
+- Ch 7: Cross-Validation in Finance
+- Ch 10: Bet Sizing (Kelly criterion for position sizing)
+
+---
+
 ## Completion Signal
 
 **LOOP_COMPLETE**
