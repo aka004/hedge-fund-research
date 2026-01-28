@@ -1,0 +1,21 @@
+{
+  "session_id": "AAPL_20260127_002800",
+  "ticker": "AAPL",
+  "date": "2026-01-27T00:28:04.193803",
+  "duration_minutes": 0.05456636666666667,
+  "methodology": "AFML",
+  "efficiency_metrics": {
+    "database_hit_rate": 1.0,
+    "total_data_gaps": 0,
+    "methodology_gaps": 0,
+    "standard_gaps": 0
+  },
+  "data_gaps": [],
+  "methodology_gaps": [],
+  "schema_improvements": [],
+  "system_health": {
+    "target_hit_rate": 0.8,
+    "current_hit_rate": 1.0,
+    "methodology_readiness": "OK"
+  }
+}

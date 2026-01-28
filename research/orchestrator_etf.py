@@ -313,12 +313,15 @@ You receive THREE verified summaries:
 
 Markdown memo with:
 - YAML frontmatter (ticker, date, rating, etc.)
+- Fund Description (use the description from verified data verbatim)
 - Executive Summary
 - ETF Structure Analysis
 - Underlying Asset/Sector Analysis
 - Macro Environment
 - Risk Factors
 - Recommendation
+
+IMPORTANT: Include a "Fund Description" section right after the header that uses the fund description from the verified data. This describes what the fund invests in and its investment objective.
 
 Be concise. Trust the verified inputs."""
 
@@ -351,6 +354,7 @@ class VerifiedData:
     asset_type: str = ""
     # ETF info
     name: Optional[str] = None
+    description: Optional[str] = None  # Fund/asset description
     expense_ratio: Optional[float] = None
     aum_billions: Optional[float] = None
     nav: Optional[float] = None
@@ -376,6 +380,11 @@ class VerifiedData:
         if self.name:
             lines.append(f"NAME: {self.name}")
         lines.append("")
+        
+        if self.description:
+            lines.append("DESCRIPTION:")
+            lines.append(f"  {self.description}")
+            lines.append("")
         
         lines.append("ETF STRUCTURE:")
         if self.price is not None:
@@ -1021,6 +1030,7 @@ class ETFResearchOrchestratorV6:
             if etf_result.get("status") == "success":
                 data = etf_result["data"]
                 verified.name = data.get("name")
+                verified.description = data.get("description")
                 verified.expense_ratio = data.get("expense_ratio_pct")
                 verified.aum_billions = data.get("aum_billions")
                 verified.nav = data.get("nav")

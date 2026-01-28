@@ -1,0 +1,10 @@
+{
+  "agent": "04-COMPETITIVE-AGENT",
+  "status": "failed",
+  "timestamp": "2026-01-27T00:28:03.779516",
+  "methodology": "AFML",
+  "response": "",
+  "data_gaps": [],
+  "duration_seconds": 0.114172,
+  "tokens_used": 0
+}

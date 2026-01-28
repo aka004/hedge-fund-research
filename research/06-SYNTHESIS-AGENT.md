@@ -43,14 +43,29 @@ From Orchestrator:
 ### Document Order (MANDATORY)
 
 ```
-1. EXECUTIVE SUMMARY (always first)
-2. Rating & Price Targets
-3. Investment Thesis & Variant Perception
-4. Decision Rules / Quality Scorecard / Entry Overlay
-5. Sections 1-21 (full memo body)
-6. Coverage Log + Coverage Validator (appendix)
-7. Model Appendix (DCF, sensitivities, data tables)
-8. DATA INFRASTRUCTURE FEEDBACK (NEW - system improvement appendix)
+1. COMPANY DESCRIPTION (always first - from verified data)
+2. EXECUTIVE SUMMARY
+3. Rating & Price Targets
+4. Investment Thesis & Variant Perception
+5. Decision Rules / Quality Scorecard / Entry Overlay
+6. Sections 1-21 (full memo body)
+7. Coverage Log + Coverage Validator (appendix)
+8. Model Appendix (DCF, sensitivities, data tables)
+9. DATA INFRASTRUCTURE FEEDBACK (NEW - system improvement appendix)
+```
+
+---
+
+## COMPANY DESCRIPTION TEMPLATE
+
+```markdown
+# Company Description
+
+**Company**: [Company Name]
+**Sector**: [Sector]
+**Industry**: [Industry]
+
+[Include the company description from verified data verbatim. This describes what the company does, its products/services, geographic presence, and market position. Use the description from the VERIFIED DATA block.]
 ```
 
 ---
@@ -320,7 +335,8 @@ Step 2: [description]
 ## QUALITY CHECKS BEFORE SUBMISSION
 
 ### Completeness
-- [ ] Executive Summary is FIRST
+- [ ] Company Description is FIRST (from verified data)
+- [ ] Executive Summary is SECOND
 - [ ] All 21 sections present
 - [ ] Coverage log and validator included
 - [ ] Model appendix with sensitivities

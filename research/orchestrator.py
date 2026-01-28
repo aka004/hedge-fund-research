@@ -286,6 +286,7 @@ You receive THREE verified summaries from verification agents:
 
 Write a well-structured markdown investment memo with:
 - YAML frontmatter (ticker, date, rating, price_target, current_price, tags)
+- Company Description (FIRST - use the description from VERIFIED DATA verbatim)
 - Executive Summary
 - Investment Thesis  
 - Valuation Analysis
@@ -293,6 +294,8 @@ Write a well-structured markdown investment memo with:
 - Competitive Position
 - Recommendation
 - Data Gaps (if any)
+
+IMPORTANT: Always include a "Company Description" section at the start that uses the company description from the verified data. This describes what the company does.
 
 Be concise. Quality over quantity. Trust the verified inputs."""
 
@@ -323,6 +326,12 @@ class VerifiedData:
     """Immutable verified data from tools - THE source of truth."""
     ticker: str
     fetched_at: str
+    # Company info
+    name: Optional[str] = None
+    description: Optional[str] = None  # Company/asset description
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    # Price data
     current_price: Optional[float] = None
     market_cap: Optional[float] = None
     pe_ratio: Optional[float] = None
@@ -343,6 +352,20 @@ class VerifiedData:
     def to_constraint_block(self) -> str:
         """Generate constraint block for prompts."""
         lines = ["=" * 60, "VERIFIED DATA - SOURCE OF TRUTH", "=" * 60, ""]
+        
+        lines.append(f"TICKER: {self.ticker}")
+        if self.name:
+            lines.append(f"NAME: {self.name}")
+        if self.sector:
+            lines.append(f"SECTOR: {self.sector}")
+        if self.industry:
+            lines.append(f"INDUSTRY: {self.industry}")
+        lines.append("")
+        
+        if self.description:
+            lines.append("COMPANY DESCRIPTION:")
+            lines.append(f"  {self.description}")
+            lines.append("")
         
         if self.current_price is not None:
             lines.append(f"CURRENT_PRICE = ${self.current_price:.2f}")
@@ -985,6 +1008,19 @@ class ResearchOrchestratorV6:
         verified = VerifiedData(ticker=ticker, fetched_at=datetime.now().isoformat())
         
         try:
+            # Company overview (name, description, sector, industry)
+            overview_result = execute_tool("get_company_overview", {"ticker": ticker})
+            if overview_result:
+                overview_data = json.loads(overview_result)
+                info = overview_data.get("info", {})
+                verified.name = info.get("name")
+                verified.description = info.get("description")
+                verified.sector = info.get("sector")
+                verified.industry = info.get("industry")
+                
+                if verified.name:
+                    log(f"  Verified Company: {verified.name}", "success")
+            
             # Price data
             price_result = execute_tool("get_price_data", {"ticker": ticker})
             if price_result:

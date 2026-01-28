@@ -60,6 +60,12 @@ Weight the component scores based on asset type:
 
 ---
 
+## Fund Description
+
+{Include the fund description from verified data. This should describe the fund's investment objective, what it tracks, and key characteristics. Use the description verbatim from the data source if available.}
+
+---
+
 ## Executive Summary
 
 **Rating**: {RATING}

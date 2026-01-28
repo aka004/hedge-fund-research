@@ -1,0 +1,10 @@
+{
+  "agent": "08-DATA-QUALITY-AGENT",
+  "status": "failed",
+  "timestamp": "2026-01-27T00:26:23.551075",
+  "methodology": "AFML",
+  "response": "",
+  "data_gaps": [],
+  "duration_seconds": 0.383654,
+  "tokens_used": 0
+}
