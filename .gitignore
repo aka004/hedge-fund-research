@@ -54,3 +54,6 @@ feedback/
 agents/logs/
 *.epub
 research/deprecated/
+frontend/node_modules/
+frontend/pnpm-lock.yaml
+node_modules/
