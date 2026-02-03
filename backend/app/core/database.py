@@ -29,4 +29,20 @@ def query_db(sql: str, params: dict = None):
             result = conn.execute(sql, params).fetchdf()
         else:
             result = conn.execute(sql).fetchdf()
-        return result.to_dict('records')
+        
+        # Convert to records and handle None/NaN values
+        records = result.to_dict('records')
+        
+        # Clean up each record
+        for record in records:
+            for key, value in list(record.items()):
+                # Convert pandas NA/NaN to None
+                if value is not None:
+                    try:
+                        import math
+                        if isinstance(value, float) and math.isnan(value):
+                            record[key] = None
+                    except:
+                        pass
+        
+        return records

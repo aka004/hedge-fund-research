@@ -145,8 +145,33 @@ async def screen_stocks(request: ScreenerRequest):
             # Get data
             data_result = conn.execute(data_sql, params).fetchdf()
             
-            # Convert to StockSummary objects
-            stocks = [StockSummary(**row) for row in data_result.to_dict('records')]
+            # Convert to dict records
+            records = data_result.to_dict('records')
+            
+            # Clean and convert to StockSummary objects
+            stocks = []
+            for row in records:
+                # Clean the row - convert NaN/NA to None
+                cleaned_row = {}
+                for key, value in row.items():
+                    if value is not None:
+                        try:
+                            import math
+                            if isinstance(value, float) and math.isnan(value):
+                                cleaned_row[key] = None
+                            else:
+                                cleaned_row[key] = value
+                        except:
+                            cleaned_row[key] = value
+                    else:
+                        cleaned_row[key] = None
+                
+                try:
+                    stocks.append(StockSummary(**cleaned_row))
+                except Exception as e:
+                    # Log and skip problematic rows
+                    print(f"Warning: Could not serialize row for {cleaned_row.get('ticker', 'unknown')}: {e}")
+                    continue
             
             return ScreenerResponse(
                 total=total,
