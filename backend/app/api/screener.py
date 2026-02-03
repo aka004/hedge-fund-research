@@ -139,36 +139,36 @@ async def screen_stocks(request: ScreenerRequest):
         LIMIT {request.page_size} OFFSET {offset}
         """
         
+        # Use separate connections for count and data to avoid serialization issues
         with get_db() as conn:
-            # Get total count
             count_result = conn.execute(count_sql, params).fetchone()
             total = count_result[0] if count_result else 0
-            
-            # Get data
+        
+        with get_db() as conn:
             data_result = conn.execute(data_sql, params).fetchdf()
-            
-            # Clean DataFrame (replace NaN with None)
-            data_result = clean_dataframe(data_result)
-            
-            # Convert to dict records
-            records = data_result.to_dict('records')
-            
-            # Convert to StockSummary objects
-            stocks = []
-            for row in records:
-                try:
-                    stocks.append(StockSummary(**row))
-                except Exception as e:
-                    # Log and skip problematic rows
-                    print(f"Warning: Could not serialize row for {row.get('ticker', 'unknown')}: {e}")
-                    continue
-            
-            return ScreenerResponse(
-                total=total,
-                page=request.page,
-                page_size=request.page_size,
-                data=stocks
-            )
+        
+        # Clean DataFrame (replace NaN with None)
+        data_result = clean_dataframe(data_result)
+        
+        # Convert to dict records
+        records = data_result.to_dict('records')
+        
+        # Convert to StockSummary objects
+        stocks = []
+        for row in records:
+            try:
+                stocks.append(StockSummary(**row))
+            except Exception as e:
+                # Log and skip problematic rows
+                print(f"Warning: Could not serialize row for {row.get('ticker', 'unknown')}: {e}")
+                continue
+        
+        return ScreenerResponse(
+            total=total,
+            page=request.page,
+            page_size=request.page_size,
+            data=stocks
+        )
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
