@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { StockSummary, SortConfig } from '../types/stock'
 import { formatCurrency, formatPercent, formatNumber, formatVolume, getPriceChangeColor } from '../lib/formatters'
+import { getWatchlist, toggleWatchlist } from '../lib/watchlist'
 
 interface StockTableProps {
   stocks: StockSummary[]
@@ -11,6 +12,12 @@ interface StockTableProps {
 export default function StockTable({ stocks, onSort, onRowClick }: StockTableProps) {
   const [sortField, setSortField] = useState('market_cap')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+  const [watchlist, setWatchlist] = useState<string[]>([])
+
+  // Load watchlist on mount and when stocks change
+  useEffect(() => {
+    setWatchlist(getWatchlist())
+  }, [stocks])
 
   const handleHeaderClick = (field: string) => {
     const newDirection = sortField === field && sortDirection === 'desc' ? 'asc' : 'desc'
@@ -18,6 +25,14 @@ export default function StockTable({ stocks, onSort, onRowClick }: StockTablePro
     setSortDirection(newDirection)
     onSort({ field, direction: newDirection })
   }
+
+  const handleStarClick = (e: React.MouseEvent, ticker: string) => {
+    e.stopPropagation() // Prevent row click
+    toggleWatchlist(ticker)
+    setWatchlist(getWatchlist()) // Refresh watchlist
+  }
+
+  const isStarred = (ticker: string) => watchlist.includes(ticker.toUpperCase())
 
   const SortIcon = ({ field }: { field: string }) => {
     if (sortField !== field) return null
@@ -29,6 +44,9 @@ export default function StockTable({ stocks, onSort, onRowClick }: StockTablePro
       <table className="w-full">
         <thead className="bg-slate-800 border-b border-slate-700">
           <tr>
+            <th className="px-2 py-3 text-center text-sm font-medium w-12">
+              ★
+            </th>
             <th
               onClick={() => handleHeaderClick('ticker')}
               className="px-4 py-3 text-left text-sm font-medium cursor-pointer hover:bg-slate-700"
@@ -98,6 +116,15 @@ export default function StockTable({ stocks, onSort, onRowClick }: StockTablePro
               onClick={() => onRowClick(stock.ticker)}
               className="border-b border-slate-700 hover:bg-slate-800 cursor-pointer"
             >
+              <td className="px-2 py-3 text-center">
+                <button
+                  onClick={(e) => handleStarClick(e, stock.ticker)}
+                  className="text-2xl hover:scale-110 transition-transform"
+                  title={isStarred(stock.ticker) ? 'Remove from watchlist' : 'Add to watchlist'}
+                >
+                  {isStarred(stock.ticker) ? '★' : '☆'}
+                </button>
+              </td>
               <td className="px-4 py-3">
                 <div className="font-medium">{stock.ticker}</div>
                 <div className="text-xs text-slate-400 truncate max-w-xs">
