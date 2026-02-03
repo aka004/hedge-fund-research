@@ -49,7 +49,7 @@ from agent_tools import AGENT_TOOLS, execute_tool
 try:
     from dotenv import load_dotenv
     env_path = Path(__file__).parent.parent / ".env"
-    load_dotenv(env_path)
+    load_dotenv(env_path, override=True)  # Override shell env vars with .env
 except ImportError:
     # python-dotenv not installed, rely on system environment variables
     pass
