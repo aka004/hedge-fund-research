@@ -4,6 +4,8 @@ FastAPI backend for Stock Screener.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api import screener, stock
+from app.models.schemas import HealthResponse
 
 app = FastAPI(
     title="Stock Screener API",
@@ -20,15 +22,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include routers
+app.include_router(screener.router)
+app.include_router(stock.router)
+
 
 @app.get("/")
 async def root():
     return {"message": "Stock Screener API", "version": "1.0.0"}
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "version": "1.0.0"}
 
 
 if __name__ == "__main__":
