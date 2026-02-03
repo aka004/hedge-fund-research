@@ -2,11 +2,26 @@
 Stock detail API endpoint.
 """
 
+import math
 from fastapi import APIRouter, HTTPException
 from ..models.schemas import StockDetail, CompanyInfo, Fundamentals, Technicals, PricePoint
 from ..core.database import get_db
 
 router = APIRouter(prefix="/api", tags=["stock"])
+
+
+def clean_dict(data: dict) -> dict:
+    """Replace NaN/Inf values with None for JSON serialization."""
+    cleaned = {}
+    for key, value in data.items():
+        if isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                cleaned[key] = None
+            else:
+                cleaned[key] = value
+        else:
+            cleaned[key] = value
+    return cleaned
 
 
 @router.get("/stock/{ticker}", response_model=StockDetail)
@@ -37,7 +52,7 @@ async def get_stock_detail(ticker: str):
             if len(company_result) == 0:
                 raise HTTPException(status_code=404, detail=f"Stock {ticker} not found")
             
-            company_data = company_result.to_dict('records')[0]
+            company_data = clean_dict(company_result.to_dict('records')[0])
             company = CompanyInfo(**company_data)
             
             # Get latest price
@@ -87,7 +102,7 @@ async def get_stock_detail(ticker: str):
             
             fundamentals_data = {}
             if len(fundamentals_result) > 0:
-                fundamentals_data = fundamentals_result.to_dict('records')[0]
+                fundamentals_data = clean_dict(fundamentals_result.to_dict('records')[0])
             
             fundamentals = Fundamentals(**fundamentals_data)
             
@@ -104,7 +119,7 @@ async def get_stock_detail(ticker: str):
             
             technicals_data = {}
             if len(technicals_result) > 0:
-                technicals_data = technicals_result.to_dict('records')[0]
+                technicals_data = clean_dict(technicals_result.to_dict('records')[0])
             
             technicals = Technicals(**technicals_data)
             

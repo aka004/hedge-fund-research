@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { fetchStockDetail } from '../lib/api'
 import { formatCurrency, formatPercent, formatNumber, getPriceChangeColor } from '../lib/formatters'
 import type { StockDetail } from '../types/stock'
+import PriceChart from './PriceChart'
+import RSIChart from './RSIChart'
 
 export default function StockDetailPage() {
   const { ticker } = useParams<{ ticker: string }>()
@@ -114,6 +116,14 @@ export default function StockDetailPage() {
           <QuickStat label="Debt/Equity" value={formatNumber(fundamentals.debt_equity)} />
           <QuickStat label="RSI (14)" value={formatNumber(technicals.rsi_14)} />
         </div>
+
+        {/* Price Charts */}
+        {stock.price_history && stock.price_history.length > 0 && (
+          <div className="space-y-6 mb-8">
+            <PriceChart priceHistory={stock.price_history} technicals={technicals} />
+            <RSIChart priceHistory={stock.price_history} currentRSI={technicals.rsi_14 || null} />
+          </div>
+        )}
 
         {/* Metrics Sections */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
