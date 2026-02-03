@@ -66,11 +66,14 @@ class StockSummary(BaseModel):
     current_ratio: Optional[float] = None
     dividend_yield: Optional[float] = None
     payout_ratio: Optional[float] = None
-    rsi_14: Optional[float] = None
-    beta: Optional[float] = None
     sma_20: Optional[float] = None
     sma_50: Optional[float] = None
     sma_200: Optional[float] = None
+    rsi_14: Optional[float] = None
+    macd: Optional[float] = None
+    beta: Optional[float] = None
+    atr_14: Optional[float] = None
+    relative_volume: Optional[float] = None
     distance_52w_high: Optional[float] = None
     distance_52w_low: Optional[float] = None
 
