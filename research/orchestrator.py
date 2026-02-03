@@ -45,6 +45,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Import from same directory
 from agent_tools import AGENT_TOOLS, execute_tool
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).parent.parent / ".env"
+    load_dotenv(env_path)
+except ImportError:
+    # python-dotenv not installed, rely on system environment variables
+    pass
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
@@ -74,7 +83,7 @@ except ImportError:
 # =============================================================================
 
 class Config:
-    MODEL = "claude-sonnet-4-20250514"
+    MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 (September 2025) - matches Clawdbot
     MAX_TOKENS = 8000
     MAX_TOKENS_VERIFIER = 4000  # Smaller for verification agents
     MAX_TOKENS_SYNTHESIS = 8000
