@@ -243,8 +243,11 @@ def populate_stock(ticker: str, conn):
         conn.execute("DELETE FROM technicals WHERE ticker = $ticker", {"ticker": ticker})
         logger.info(f"  Inserting technicals...")
         
-        # Filter out None values
-        technicals = {k: v for k, v in technicals.items() if v is not None}
+        # Filter to only columns that exist in technicals table
+        valid_columns = ['ticker', 'date', 'sma_20', 'sma_50', 'sma_200', 'rsi_14', 
+                        'macd', 'beta', 'atr_14', 'relative_volume', 
+                        'distance_52w_high', 'distance_52w_low']
+        technicals = {k: v for k, v in technicals.items() if k in valid_columns and v is not None}
         
         # Build INSERT statement dynamically
         columns = ', '.join(technicals.keys())
