@@ -5,6 +5,8 @@ Database connection management.
 import duckdb
 from pathlib import Path
 from contextlib import contextmanager
+import pandas as pd
+import numpy as np
 
 # Import from parent project
 import sys
@@ -15,11 +17,19 @@ from config import RESEARCH_DB_PATH
 @contextmanager
 def get_db():
     """Get database connection context manager."""
+    # Create a new connection for each request (thread-safe)
     conn = duckdb.connect(str(RESEARCH_DB_PATH), read_only=True)
     try:
         yield conn
     finally:
         conn.close()
+
+
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean DataFrame by replacing NaN/NA with None."""
+    # Replace NaN with None for JSON serialization
+    df = df.replace({pd.NA: None, np.nan: None})
+    return df
 
 
 def query_db(sql: str, params: dict = None):

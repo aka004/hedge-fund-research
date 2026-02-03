@@ -5,7 +5,9 @@ Screener API endpoint.
 from fastapi import APIRouter, HTTPException
 from typing import List
 from ..models.schemas import ScreenerRequest, ScreenerResponse, StockSummary
-from ..core.database import get_db
+from ..core.database import get_db, clean_dataframe
+import pandas as pd
+import numpy as np
 
 router = APIRouter(prefix="/api", tags=["screener"])
 
@@ -145,32 +147,20 @@ async def screen_stocks(request: ScreenerRequest):
             # Get data
             data_result = conn.execute(data_sql, params).fetchdf()
             
+            # Clean DataFrame (replace NaN with None)
+            data_result = clean_dataframe(data_result)
+            
             # Convert to dict records
             records = data_result.to_dict('records')
             
-            # Clean and convert to StockSummary objects
+            # Convert to StockSummary objects
             stocks = []
             for row in records:
-                # Clean the row - convert NaN/NA to None
-                cleaned_row = {}
-                for key, value in row.items():
-                    if value is not None:
-                        try:
-                            import math
-                            if isinstance(value, float) and math.isnan(value):
-                                cleaned_row[key] = None
-                            else:
-                                cleaned_row[key] = value
-                        except:
-                            cleaned_row[key] = value
-                    else:
-                        cleaned_row[key] = None
-                
                 try:
-                    stocks.append(StockSummary(**cleaned_row))
+                    stocks.append(StockSummary(**row))
                 except Exception as e:
                     # Log and skip problematic rows
-                    print(f"Warning: Could not serialize row for {cleaned_row.get('ticker', 'unknown')}: {e}")
+                    print(f"Warning: Could not serialize row for {row.get('ticker', 'unknown')}: {e}")
                     continue
             
             return ScreenerResponse(
