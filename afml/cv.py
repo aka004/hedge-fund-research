@@ -26,10 +26,14 @@ class PurgedKFold:
         Number of folds (default 5)
     embargo_pct : float
         Fraction of data to embargo after test set (default 0.01 = 1%)
+    bidirectional : bool
+        If True, also purge training samples after test+embargo whose
+        labels START before the test set ends (default False)
     """
 
     n_splits: int = 5
     embargo_pct: float = 0.01
+    bidirectional: bool = False
 
     def split(
         self,
@@ -93,12 +97,25 @@ class PurgedKFold:
                         sample_time = X.index[i]
                         label_end = labels_end_times.iloc[i]
 
-                        # If this training sample's label extends into test period
+                        # Forward purge: sample before test, label extends into test
                         if (
                             sample_time < test_start_time
                             and label_end > test_start_time
                         ):
                             train_mask[i] = False
+
+                        # Backward purge: sample after test+embargo, but its
+                        # label start overlaps with the test period
+                        elif (
+                            self.bidirectional
+                            and sample_time > test_end_time
+                            and label_end >= sample_time  # valid label
+                        ):
+                            # Check if this sample's label start is before
+                            # the test period ended
+                            label_start = X.index[i]
+                            if label_start <= test_end_time:
+                                train_mask[i] = False
 
             train_indices = indices[train_mask]
 

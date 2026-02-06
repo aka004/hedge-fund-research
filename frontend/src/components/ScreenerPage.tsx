@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import FilterPanel from './FilterPanel'
 import StockTable from './StockTable'
 import { fetchScreener } from '../lib/api'
@@ -113,8 +113,16 @@ export default function ScreenerPage() {
             <div className="text-2xl font-bold text-blue-500">HF</div>
             <div className="text-xl font-semibold">Stock Screener</div>
           </div>
-          <div className="text-sm text-slate-400">
-            {total.toLocaleString()} stocks found
+          <div className="flex items-center gap-4">
+            <Link
+              to="/dashboard"
+              className="px-3 py-1.5 text-sm font-medium text-cyan-400 border border-cyan-800 rounded-lg hover:bg-cyan-900/20 transition-colors"
+            >
+              Dashboard
+            </Link>
+            <span className="text-sm text-slate-400">
+              {total.toLocaleString()} stocks found
+            </span>
           </div>
         </div>
       </header>

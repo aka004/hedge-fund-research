@@ -2,10 +2,10 @@
 FastAPI backend for Stock Screener.
 """
 
+from app.api import dashboard, screener, stock
+from app.models.schemas import HealthResponse
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import screener, stock
-from app.models.schemas import HealthResponse
 
 app = FastAPI(
     title="Stock Screener API",
@@ -25,6 +25,7 @@ app.add_middleware(
 # Include routers
 app.include_router(screener.router)
 app.include_router(stock.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/")
@@ -39,4 +40,5 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
