@@ -158,7 +158,7 @@ _Log any blockers, decisions, or issues here:_
 
 **Added:** 2026-01-26
 **Source:** Revised AFML roadmap (Obsidian vault)
-**Full plan:** docs/plans/2026-01-26-AFML-implementation-roadmap.md
+**Full plan:** docs/plans/2026-02-18-unified-backtest-roadmap.md
 
 ### Current Status Summary
 
