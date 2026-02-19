@@ -236,7 +236,15 @@ Record parameter decisions here as they're made during brainstorming.
 
 | Date | Parameter | Decision | Rationale |
 |------|-----------|----------|-----------|
-| | | | |
+| 2026-02-18 | Exit execution price | Next-day open | Detect breach at close, execute next morning. Avoids look-ahead. Aligns with Pardo/Chan. |
+| 2026-02-18 | Engine architecture | New `EventDrivenEngine` alongside existing `BacktestEngine` | Clean separation. No risk of breaking existing pipeline. |
+| 2026-02-18 | Barrier param sharing | Independent configs for labeling vs live exits | Allows tight barriers for training labels, wider for live. |
+| 2026-02-18 | Live max_holding_days | 21 days | Clears flat trades after ~1 month. Stop loss handles losers. Frees capital for reallocation. |
+| 2026-02-18 | Cash after mid-period exit | Wait for next rebalance | Avoids overtrading. Clean separation: entries = signal-driven, exits = barrier-driven. |
+| 2026-02-18 | Max single position weight | 10% of equity | Prevents concentration. Up to 10 full positions or 20 half positions. |
+| 2026-02-18 | Daily step mode | Trading days only | Step only on days with price data. No holiday calendar needed. |
+| 2026-02-18 | Re-entry after exit | Allowed immediately | Each entry is independent. If signal still ranks, re-enter at next rebalance. |
+| 2026-02-18 | Benchmark | SPY | Track SPY equity curve alongside strategy. Requires SPY in data cache. |
 
 ---
 
