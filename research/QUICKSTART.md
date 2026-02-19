@@ -355,7 +355,7 @@ Expected improvement over time:
 - [`README.md`](README.md) - Full system documentation
 - [`00-ORCHESTRATOR.md`](00-ORCHESTRATOR.md) - Orchestrator agent prompt
 - [`07-HANDOFF-CONTRACTS.md`](07-HANDOFF-CONTRACTS.md) - Agent input/output schemas
-- [`../docs/plans/2026-01-26-AFML-implementation-roadmap.md`](../docs/plans/2026-01-26-AFML-implementation-roadmap.md) - AFML integration details
+- [`../docs/plans/2026-02-18-unified-backtest-roadmap.md`](../docs/plans/2026-02-18-unified-backtest-roadmap.md) - Backtest & AFML roadmap
 
 ## Support
 

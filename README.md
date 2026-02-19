@@ -128,33 +128,34 @@ python scripts/run_backtest.py --strategy momentum_value_social
 
 See [TODO.md](TODO.md) for implementation tasks.
 
-### AFML Implementation Status
+### AFML Module
 
-The system implements concepts from *Advances in Financial Machine Learning* (Lopez de Prado):
+The system implements techniques from *Advances in Financial Machine Learning* (Lopez de Prado):
 
-| Component | Status | Location |
-|-----------|--------|----------|
-| Triple-barrier labeling | Complete | `afml/labels.py` |
-| Sample uniqueness weights | Complete | `afml/weights.py` |
-| Purged K-Fold CV | Complete | `afml/cv.py` |
-| HRP portfolio allocation | Partial | `afml/portfolio.py` |
-| Regime detection | Partial | `afml/regime.py` |
-| CPCV / Sequential bootstrap | Not started | - |
-| Meta-labeling | Not started | - |
+| Component | File | Status |
+|-----------|------|--------|
+| Triple-barrier labeling | `afml/labels.py` | Complete |
+| CUSUM filter | `afml/cusum.py` | Complete |
+| Purged K-Fold CV | `afml/cv.py` | Complete |
+| Combinatorial Purged CV | `afml/cpcv.py` | Complete |
+| Sample uniqueness weights | `afml/weights.py` | Complete |
+| Sequential bootstrap | `afml/bootstrap.py` | Complete |
+| Deflated Sharpe / PSR | `afml/metrics.py` | Complete |
+| Kelly criterion | `afml/bet_sizing.py` | Complete |
+| HRP portfolio | `afml/portfolio.py` | Complete |
+| Meta-labeling (RF) | `afml/meta_labeling.py` | Complete |
+| Regime detection (200MA) | `afml/regime.py` | Complete |
+| ADF stationarity | `afml/checks.py` | Complete |
 
-Full implementation roadmap: [docs/plans/2026-01-26-AFML-implementation-roadmap.md](docs/plans/2026-01-26-AFML-implementation-roadmap.md)
+Full roadmap: [docs/plans/2026-02-18-unified-backtest-roadmap.md](docs/plans/2026-02-18-unified-backtest-roadmap.md)
 
-### Multi-Agent Research System (Planned)
+### Multi-Agent Systems
 
-A full orchestration system for automated stock research is planned:
-
-| Phase | Description | Status |
-|-------|-------------|--------|
-| Manual prompts | Copy-paste agent sequence | Designed |
-| Python orchestrator | Script-driven coordination | Planned |
-| Full automation | Scheduled research + feedback | Planned |
-
-See [TODO.md](TODO.md) Phase 3 for details.
+| System | Status | Entry Point |
+|--------|--------|-------------|
+| Alpha validation (event-driven) | Working | `agents/orchestrator.py` |
+| LLM research orchestrator | Working | `research/orchestrator.py` |
+| Dashboard backtest runner | Working | `backend/app/services/backtest_runner.py` |
 
 ## License
 
