@@ -6,10 +6,21 @@ from strategy.backtest.engine import (
     BacktestResult,
     WalkForwardValidator,
 )
+from strategy.backtest.event_engine import (
+    EventDrivenEngine,
+    EventEngineConfig,
+    EventEngineResult,
+)
+from strategy.backtest.exit_manager import (
+    ExitConfig,
+    ExitManager,
+    ExitSignal,
+)
 from strategy.backtest.portfolio import (
     Portfolio,
     PortfolioManager,
     Position,
+    RoundTripTrade,
     Trade,
     TransactionCosts,
 )
@@ -17,6 +28,7 @@ from strategy.backtest.portfolio import (
 __all__ = [
     "Position",
     "Trade",
+    "RoundTripTrade",
     "Portfolio",
     "TransactionCosts",
     "PortfolioManager",
@@ -24,4 +36,10 @@ __all__ = [
     "BacktestResult",
     "BacktestEngine",
     "WalkForwardValidator",
+    "ExitSignal",
+    "ExitConfig",
+    "ExitManager",
+    "EventEngineConfig",
+    "EventEngineResult",
+    "EventDrivenEngine",
 ]

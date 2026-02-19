@@ -88,12 +88,24 @@ def calculate_metrics(
 
     # Sharpe ratio
     excess_returns = rets - risk_free_rate / periods_per_year
-    sharpe = (excess_returns.mean() * periods_per_year) / annualized_vol if annualized_vol > 0 else 0.0
+    sharpe = (
+        (excess_returns.mean() * periods_per_year) / annualized_vol
+        if annualized_vol > 0
+        else 0.0
+    )
 
     # Sortino ratio (only downside deviation)
     downside_returns = rets[rets < 0]
-    downside_std = downside_returns.std() * np.sqrt(periods_per_year) if len(downside_returns) > 0 else 0.0
-    sortino = (excess_returns.mean() * periods_per_year) / downside_std if downside_std > 0 else 0.0
+    downside_std = (
+        downside_returns.std() * np.sqrt(periods_per_year)
+        if len(downside_returns) > 0
+        else 0.0
+    )
+    sortino = (
+        (excess_returns.mean() * periods_per_year) / downside_std
+        if downside_std > 0
+        else 0.0
+    )
 
     # Drawdown analysis
     cum_returns = (1 + returns).cumprod()
@@ -201,12 +213,18 @@ def calculate_rolling_metrics(
     for i in range(window, len(returns) + 1):
         window_returns = returns.iloc[i - window : i]
         metrics = calculate_metrics(window_returns, risk_free_rate=risk_free_rate)
-        results.append({
-            "date": returns.index[i - 1] if hasattr(returns.index, "__getitem__") else i - 1,
-            "rolling_sharpe": metrics.sharpe_ratio,
-            "rolling_volatility": metrics.annualized_volatility,
-            "rolling_return": metrics.total_return,
-        })
+        results.append(
+            {
+                "date": (
+                    returns.index[i - 1]
+                    if hasattr(returns.index, "__getitem__")
+                    else i - 1
+                ),
+                "rolling_sharpe": metrics.sharpe_ratio,
+                "rolling_volatility": metrics.annualized_volatility,
+                "rolling_return": metrics.total_return,
+            }
+        )
 
     return pd.DataFrame(results)
 
@@ -227,20 +245,29 @@ def compare_to_benchmark(
         Dictionary of comparison metrics
     """
     # Align dates
-    aligned = pd.DataFrame({
-        "strategy": strategy_returns,
-        "benchmark": benchmark_returns,
-    }).dropna()
+    aligned = pd.DataFrame(
+        {
+            "strategy": strategy_returns,
+            "benchmark": benchmark_returns,
+        }
+    ).dropna()
 
     if aligned.empty:
         return {}
 
-    strategy_metrics = calculate_metrics(aligned["strategy"], risk_free_rate=risk_free_rate)
-    benchmark_metrics = calculate_metrics(aligned["benchmark"], risk_free_rate=risk_free_rate)
+    strategy_metrics = calculate_metrics(
+        aligned["strategy"], risk_free_rate=risk_free_rate
+    )
+    benchmark_metrics = calculate_metrics(
+        aligned["benchmark"], risk_free_rate=risk_free_rate
+    )
 
     # Alpha and Beta
     cov_matrix = aligned.cov()
-    beta = cov_matrix.loc["strategy", "benchmark"] / cov_matrix.loc["benchmark", "benchmark"]
+    beta = (
+        cov_matrix.loc["strategy", "benchmark"]
+        / cov_matrix.loc["benchmark", "benchmark"]
+    )
 
     excess_strategy = aligned["strategy"].mean() * 252
     excess_benchmark = aligned["benchmark"].mean() * 252
@@ -248,7 +275,11 @@ def compare_to_benchmark(
 
     # Information ratio
     tracking_error = (aligned["strategy"] - aligned["benchmark"]).std() * np.sqrt(252)
-    info_ratio = (strategy_metrics.cagr - benchmark_metrics.cagr) / tracking_error if tracking_error > 0 else 0.0
+    info_ratio = (
+        (strategy_metrics.cagr - benchmark_metrics.cagr) / tracking_error
+        if tracking_error > 0
+        else 0.0
+    )
 
     return {
         "strategy_sharpe": strategy_metrics.sharpe_ratio,
@@ -261,3 +292,80 @@ def compare_to_benchmark(
         "tracking_error": tracking_error,
         "correlation": aligned["strategy"].corr(aligned["benchmark"]),
     }
+
+
+@dataclass
+class TradeMetrics:
+    """Per-trade statistics from a completed trade log."""
+
+    total_trades: int
+    win_rate: float  # fraction of trades with pnl > 0
+    profit_factor: float  # gross_wins / gross_losses
+    avg_win: float  # mean return_pct of winners
+    avg_loss: float  # mean return_pct of losers
+    avg_holding_days: float
+    median_holding_days: float
+    max_favorable_avg: float  # mean MFE across all trades
+    max_adverse_avg: float  # mean MAE across all trades
+    exit_breakdown: dict  # exit_reason -> fraction of total
+
+
+def calculate_trade_metrics(trade_log: pd.DataFrame) -> TradeMetrics:
+    """Calculate per-trade metrics from a completed trade log.
+
+    Args:
+        trade_log: DataFrame with columns: symbol, entry_date, entry_price,
+            entry_reason, exit_date, exit_price, exit_reason, shares,
+            max_favorable, max_adverse, holding_days, pnl, return_pct
+
+    Returns:
+        TradeMetrics with aggregated trade statistics.
+    """
+    if trade_log.empty:
+        return TradeMetrics(
+            total_trades=0,
+            win_rate=0.0,
+            profit_factor=0.0,
+            avg_win=0.0,
+            avg_loss=0.0,
+            avg_holding_days=0.0,
+            median_holding_days=0.0,
+            max_favorable_avg=0.0,
+            max_adverse_avg=0.0,
+            exit_breakdown={},
+        )
+
+    n = len(trade_log)
+    winners = trade_log[trade_log["pnl"] > 0]
+    losers = trade_log[trade_log["pnl"] < 0]
+
+    win_rate = len(winners) / n
+
+    gross_wins = winners["pnl"].sum() if len(winners) > 0 else 0.0
+    gross_losses = abs(losers["pnl"].sum()) if len(losers) > 0 else 0.0
+    profit_factor = gross_wins / gross_losses if gross_losses > 0 else float("inf")
+
+    avg_win = float(winners["return_pct"].mean()) if len(winners) > 0 else 0.0
+    avg_loss = float(losers["return_pct"].mean()) if len(losers) > 0 else 0.0
+
+    avg_holding = float(trade_log["holding_days"].mean())
+    median_holding = float(trade_log["holding_days"].median())
+
+    mfe_avg = float(trade_log["max_favorable"].mean())
+    mae_avg = float(trade_log["max_adverse"].mean())
+
+    exit_counts = trade_log["exit_reason"].value_counts()
+    exit_breakdown = (exit_counts / n).to_dict()
+
+    return TradeMetrics(
+        total_trades=n,
+        win_rate=win_rate,
+        profit_factor=profit_factor,
+        avg_win=avg_win,
+        avg_loss=avg_loss,
+        avg_holding_days=avg_holding,
+        median_holding_days=median_holding,
+        max_favorable_avg=mfe_avg,
+        max_adverse_avg=mae_avg,
+        exit_breakdown=exit_breakdown,
+    )

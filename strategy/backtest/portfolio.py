@@ -62,6 +62,45 @@ class Trade:
 
 
 @dataclass
+class RoundTripTrade:
+    """Tracks full lifecycle of a position from entry to exit."""
+
+    symbol: str
+    entry_date: date
+    entry_price: float
+    entry_reason: str  # "signal_rebalance" | "cusum_event" (Phase 2)
+    exit_date: date | None = None
+    exit_price: float | None = None
+    exit_reason: str | None = (
+        None  # "profit_target" | "stop_loss" | "timeout" | "rebalance_out"
+    )
+    shares: float = 0.0
+    max_favorable: float = 0.0  # best unrealized return (MFE)
+    max_adverse: float = 0.0  # worst unrealized return (MAE)
+
+    @property
+    def holding_days(self) -> int | None:
+        """Number of calendar days held."""
+        if self.exit_date is None:
+            return None
+        return (self.exit_date - self.entry_date).days
+
+    @property
+    def pnl(self) -> float | None:
+        """Profit/loss in dollar terms."""
+        if self.exit_price is None:
+            return None
+        return (self.exit_price - self.entry_price) * self.shares
+
+    @property
+    def return_pct(self) -> float | None:
+        """Return as a percentage of entry price."""
+        if self.exit_price is None or self.entry_price == 0:
+            return None
+        return (self.exit_price - self.entry_price) / self.entry_price
+
+
+@dataclass
 class Portfolio:
     """Manages a portfolio of positions."""
 
@@ -91,8 +130,7 @@ class Portfolio:
         if equity == 0:
             return {}
         return {
-            symbol: pos.market_value / equity
-            for symbol, pos in self.positions.items()
+            symbol: pos.market_value / equity for symbol, pos in self.positions.items()
         }
 
 
@@ -293,14 +331,12 @@ class PortfolioManager:
 
         # Calculate target values
         target_values = {
-            symbol: weight * current_equity
-            for symbol, weight in target_weights.items()
+            symbol: weight * current_equity for symbol, weight in target_weights.items()
         }
 
         # Current values
         current_values = {
-            symbol: pos.market_value
-            for symbol, pos in self.portfolio.positions.items()
+            symbol: pos.market_value for symbol, pos in self.portfolio.positions.items()
         }
 
         # First, handle sells
