@@ -180,3 +180,34 @@ export interface RunSummary {
 export interface RunsResponse {
   runs: RunSummary[]
 }
+
+export interface TradeLogEntry {
+  symbol: string
+  entry_date: string
+  entry_price: number
+  entry_reason: string
+  exit_date: string
+  exit_price: number
+  exit_reason: string
+  shares: number
+  pnl: number
+  return_pct: number
+  holding_days: number
+  max_favorable: number
+  max_adverse: number
+}
+
+export interface TradeLogSummary {
+  total_trades: number
+  win_rate: number
+  profit_factor: number
+  avg_holding_days: number
+  exit_breakdown: Record<string, number>
+}
+
+export interface TradeLogResponse {
+  run_id: string
+  trades: TradeLogEntry[]
+  summary: TradeLogSummary
+  is_mock: boolean
+}

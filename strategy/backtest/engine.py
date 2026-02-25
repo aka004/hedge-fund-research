@@ -110,7 +110,9 @@ class BacktestEngine:
                         current = date(current.year, current.month + 1, current.day)
                     except ValueError:
                         # Handle months with fewer days
-                        current = date(current.year, current.month + 2, 1) - timedelta(days=1)
+                        current = date(current.year, current.month + 2, 1) - timedelta(
+                            days=1
+                        )
 
         return dates
 
@@ -154,10 +156,7 @@ class BacktestEngine:
                 weight = 1.0 / len(top_signals)
                 return {s.symbol: weight for s in top_signals}
 
-            return {
-                s.symbol: max(0, s.score) / total_score
-                for s in top_signals
-            }
+            return {s.symbol: max(0, s.score) / total_score for s in top_signals}
 
         return {}
 
@@ -199,7 +198,9 @@ class BacktestEngine:
             )
 
             # Get current prices
-            all_symbols = set(universe) | set(portfolio_manager.portfolio.positions.keys())
+            all_symbols = set(universe) | set(
+                portfolio_manager.portfolio.positions.keys()
+            )
             prices = self._get_prices_for_date(list(all_symbols), rebal_date)
 
             if not prices:
@@ -218,18 +219,23 @@ class BacktestEngine:
 
             # Record equity
             portfolio_manager.portfolio.update_prices(prices)
-            equity_records.append({
-                "date": rebal_date,
-                "equity": portfolio_manager.portfolio.equity,
-                "cash": portfolio_manager.portfolio.cash,
-                "position_count": portfolio_manager.portfolio.position_count,
-            })
+            portfolio_manager.record_snapshot(rebal_date)
+            equity_records.append(
+                {
+                    "date": rebal_date,
+                    "equity": portfolio_manager.portfolio.equity,
+                    "cash": portfolio_manager.portfolio.cash,
+                    "position_count": portfolio_manager.portfolio.position_count,
+                }
+            )
 
             # Record positions
-            positions_history.append({
-                "date": rebal_date,
-                "positions": portfolio_manager.portfolio.get_weights(),
-            })
+            positions_history.append(
+                {
+                    "date": rebal_date,
+                    "positions": portfolio_manager.portfolio.get_weights(),
+                }
+            )
 
         # Create equity curve DataFrame
         equity_curve = pd.DataFrame(equity_records)
@@ -314,7 +320,9 @@ class WalkForwardValidator:
             if test_end > end_date:
                 test_end = end_date
 
-            logger.info(f"Walk-forward window: train {window_start} to {train_end}, test {test_start} to {test_end}")
+            logger.info(
+                f"Walk-forward window: train {window_start} to {train_end}, test {test_start} to {test_end}"
+            )
 
             # Run out-of-sample test
             result = self.engine.run(universe, test_start, test_end)

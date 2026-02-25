@@ -202,6 +202,47 @@ class BacktestPersistence:
                         [run_id, path_id, day_index, float(equity)],
                     )
 
+    def save_round_trip_trades(self, run_id: str, trade_log: pd.DataFrame) -> None:
+        """Save round-trip trade log from EventDrivenEngine.
+
+        DataFrame expected columns:
+            symbol, entry_date, entry_price, entry_reason,
+            exit_date, exit_price, exit_reason, shares,
+            pnl, return_pct, holding_days, max_favorable, max_adverse
+        """
+        if trade_log.empty:
+            return
+        with get_db_write() as conn:
+            for row in trade_log.itertuples(index=False):
+                trade_id = str(uuid.uuid4())
+                conn.execute(
+                    """
+                    INSERT INTO derived_round_trip_trades
+                        (run_id, trade_id, symbol, entry_date, entry_price,
+                         entry_reason, exit_date, exit_price, exit_reason,
+                         shares, pnl, return_pct, holding_days,
+                         max_favorable, max_adverse)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                    """,
+                    [
+                        run_id,
+                        trade_id,
+                        row.symbol,
+                        row.entry_date,
+                        row.entry_price,
+                        row.entry_reason,
+                        row.exit_date,
+                        row.exit_price,
+                        row.exit_reason,
+                        row.shares,
+                        row.pnl,
+                        row.return_pct,
+                        row.holding_days,
+                        row.max_favorable,
+                        row.max_adverse,
+                    ],
+                )
+
     def save_regime_history(self, regime_signal, prices: pd.Series) -> None:
         """Save regime timeline from a RegimeSignal object.
 

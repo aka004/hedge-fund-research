@@ -6,12 +6,14 @@ import PortfolioTab from './PortfolioTab'
 import FactorLabTab from './FactorLabTab'
 import ValidationTab from './ValidationTab'
 import RiskTab from './RiskTab'
+import TradeLogTab from './TradeLogTab'
 
 const TABS = [
   { id: 'portfolio', label: 'Portfolio' },
   { id: 'factors', label: 'Factor Lab' },
   { id: 'backtest', label: 'Validation' },
   { id: 'risk', label: 'Risk' },
+  { id: 'trades', label: 'Trades' },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -117,6 +119,7 @@ export default function DashboardPage() {
         {activeTab === 'factors' && <FactorLabTab runId={selectedRunId} />}
         {activeTab === 'backtest' && <ValidationTab runId={selectedRunId} />}
         {activeTab === 'risk' && <RiskTab runId={selectedRunId} />}
+        {activeTab === 'trades' && <TradeLogTab runId={selectedRunId} />}
       </div>
     </div>
   )

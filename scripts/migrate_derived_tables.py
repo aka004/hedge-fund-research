@@ -125,6 +125,26 @@ DERIVED_TABLES = {
             days_in_regime INT
         )
     """,
+    "derived_round_trip_trades": """
+        CREATE TABLE IF NOT EXISTS derived_round_trip_trades (
+            run_id VARCHAR,
+            trade_id VARCHAR,
+            symbol VARCHAR,
+            entry_date DATE,
+            entry_price DOUBLE,
+            entry_reason VARCHAR,
+            exit_date DATE,
+            exit_price DOUBLE,
+            exit_reason VARCHAR,
+            shares DOUBLE,
+            pnl DOUBLE,
+            return_pct DOUBLE,
+            holding_days INT,
+            max_favorable DOUBLE,
+            max_adverse DOUBLE,
+            PRIMARY KEY (run_id, trade_id)
+        )
+    """,
 }
 
 

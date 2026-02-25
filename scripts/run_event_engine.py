@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+"""
+Integration runner for EventDrivenEngine.
+
+Loads parquet data, builds signals, runs the event-driven backtest engine,
+and persists results to DuckDB.
+
+Usage:
+    python scripts/run_event_engine.py --universe AAPL MSFT GOOGL AMZN NVDA \\
+        --start 2022-01-01 --end 2025-12-31
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import argparse
+import logging
+from datetime import date
+
+import pandas as pd
+
+from analysis.metrics import calculate_metrics
+from config import STORAGE_PATH
+from data.storage.duckdb_store import DuckDBStore
+from data.storage.parquet import ParquetStorage
+from strategy.backtest.event_engine import (
+    EventDrivenEngine,
+    EventEngineConfig,
+)
+from strategy.backtest.portfolio import TransactionCosts
+from strategy.signals.combiner import SignalCombiner
+from strategy.signals.momentum import MomentumSignal
+from strategy.signals.value import ValueSignal
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+PARQUET_DIR = STORAGE_PATH / "parquet"
+
+
+def load_price_dataframes(
+    symbols: list[str], price_col: str = "adj_close"
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load parquet files into wide close_prices and open_prices DataFrames."""
+    prices_dir = PARQUET_DIR / "prices"
+    close_frames = {}
+    open_frames = {}
+
+    for symbol in symbols:
+        path = prices_dir / f"{symbol}.parquet"
+        if not path.exists():
+            logger.warning(f"No parquet file for {symbol}, skipping")
+            continue
+
+        df = pd.read_parquet(path)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+
+        if price_col in df.columns:
+            close_frames[symbol] = df[price_col]
+        elif "close" in df.columns:
+            close_frames[symbol] = df["close"]
+
+        if "open" in df.columns:
+            open_frames[symbol] = df["open"]
+
+    close_prices = pd.DataFrame(close_frames)
+    open_prices = pd.DataFrame(open_frames)
+
+    logger.info(
+        f"Loaded {len(close_frames)} symbols, " f"{len(close_prices)} trading days"
+    )
+    return close_prices, open_prices
+
+
+def build_equity_df(result) -> pd.DataFrame:
+    """Build the equity DataFrame for persistence."""
+    eq = result.equity_curve.copy()
+
+    # Compute benchmark equity from benchmark close prices
+    if "benchmark" in eq.columns:
+        first_bench = (
+            eq["benchmark"].dropna().iloc[0]
+            if not eq["benchmark"].dropna().empty
+            else None
+        )
+        if first_bench and first_bench > 0:
+            first_equity = eq["equity"].iloc[0]
+            eq["benchmark_equity"] = eq["benchmark"] / first_bench * first_equity
+        else:
+            eq["benchmark_equity"] = 0.0
+    else:
+        eq["benchmark_equity"] = 0.0
+
+    # Compute drawdown
+    eq["peak"] = eq["equity"].expanding().max()
+    eq["drawdown"] = (eq["equity"] - eq["peak"]) / eq["peak"] * 100
+
+    # Daily return
+    eq["daily_return"] = eq["equity"].pct_change()
+
+    # Ensure date column
+    if "date" not in eq.columns:
+        eq = eq.reset_index()
+
+    return eq[
+        ["date", "equity", "benchmark_equity", "drawdown", "daily_return"]
+    ].dropna(subset=["daily_return"])
+
+
+def persist_results(result, metrics, universe: list[str], start_str: str, end_str: str):
+    """Persist engine results to DuckDB via BacktestPersistence."""
+    # Import here to use backend's database module
+    sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
+    from app.services.persistence import BacktestPersistence
+
+    persistence = BacktestPersistence()
+
+    # Save run metadata
+    run_data = {
+        "n_assets": len(universe),
+        "sharpe_raw": metrics.sharpe_ratio,
+        "is_mock": False,
+    }
+    afml_data = {
+        "psr": None,
+        "deflated_sharpe": None,
+        "pbo": None,
+        "caveats": [],
+    }
+    run_id = persistence.save_run(
+        result=run_data,
+        strategy_name="EventDrivenEngine_momentum_value",
+        afml_metrics=afml_data,
+        universe=",".join(universe),
+        start_date=start_str,
+        end_date=end_str,
+    )
+    logger.info(f"Saved run: {run_id}")
+
+    # Save equity curve
+    equity_df = build_equity_df(result)
+    persistence.save_equity_curve(run_id, equity_df)
+    logger.info(f"Saved {len(equity_df)} equity curve rows")
+
+    # Save round-trip trades
+    if not result.trade_log.empty:
+        persistence.save_round_trip_trades(run_id, result.trade_log)
+        logger.info(f"Saved {len(result.trade_log)} round-trip trades")
+
+    # Save final portfolio weights
+    if result.open_positions:
+        last_date = result.end_date
+        total_value = sum(
+            p.shares * (p.exit_price or p.entry_price) for p in result.open_positions
+        )
+        if total_value > 0:
+            rows = []
+            for pos in result.open_positions:
+                value = pos.shares * (pos.exit_price or pos.entry_price)
+                rows.append(
+                    {
+                        "date": last_date,
+                        "ticker": pos.symbol,
+                        "weight": value / total_value,
+                        "hrp_weight": None,
+                        "kelly_fraction": None,
+                        "signal_source": "momentum+value",
+                        "is_mock": False,
+                    }
+                )
+            weights_df = pd.DataFrame(rows)
+            persistence.save_portfolio_weights(run_id, weights_df)
+            logger.info(f"Saved {len(rows)} portfolio weights")
+
+    return run_id
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run EventDrivenEngine backtest")
+    parser.add_argument(
+        "--universe",
+        nargs="+",
+        required=True,
+        help="Stock symbols to include",
+    )
+    parser.add_argument(
+        "--start",
+        default="2022-01-01",
+        help="Start date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--end",
+        default="2025-12-31",
+        help="End date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--max-positions",
+        type=int,
+        default=20,
+        help="Maximum positions (default: 20)",
+    )
+    parser.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=10.0,
+        help="Slippage in basis points (default: 10)",
+    )
+    args = parser.parse_args()
+
+    universe = [s.upper() for s in args.universe]
+    start = date.fromisoformat(args.start)
+    end = date.fromisoformat(args.end)
+
+    logger.info(f"Universe: {universe}")
+    logger.info(f"Period: {start} to {end}")
+
+    # Load price data (include SPY for benchmark)
+    all_symbols = list(set(universe + ["SPY"]))
+    close_prices, open_prices = load_price_dataframes(all_symbols)
+
+    if close_prices.empty:
+        logger.error("No price data loaded. Run fetch_price_history.py first.")
+        sys.exit(1)
+
+    # Build signal generators
+    duckdb_store = DuckDBStore(PARQUET_DIR)
+    parquet_storage = ParquetStorage(PARQUET_DIR)
+
+    momentum = MomentumSignal(duckdb_store)
+    value = ValueSignal(parquet_storage)
+    combiner = SignalCombiner([momentum, value])
+
+    # Configure engine
+    config = EventEngineConfig(
+        initial_capital=100_000.0,
+        max_positions=args.max_positions,
+        max_position_weight=0.10,
+        rebalance_frequency="monthly",
+        position_sizing="equal",
+        transaction_costs=TransactionCosts(slippage_bps=args.slippage_bps),
+        benchmark_symbol="SPY",
+    )
+
+    # Run engine
+    logger.info("Running EventDrivenEngine...")
+    engine = EventDrivenEngine(combiner, config)
+    result = engine.run(universe, close_prices, open_prices, start, end)
+
+    # Calculate metrics
+    metrics = calculate_metrics(
+        result.daily_returns,
+        trade_log=result.trade_log,
+    )
+
+    # Print summary
+    logger.info("=" * 50)
+    logger.info("RESULTS")
+    logger.info("=" * 50)
+    logger.info(f"Sharpe Ratio:  {metrics.sharpe_ratio:.3f}")
+    logger.info(f"Total Return:  {metrics.total_return:.1%}")
+    logger.info(f"CAGR:          {metrics.cagr:.1%}")
+    logger.info(f"Max Drawdown:  {metrics.max_drawdown:.1%}")
+    logger.info(f"Total Trades:  {metrics.total_trades}")
+    logger.info(f"Win Rate:      {metrics.win_rate:.1%}")
+    logger.info(f"Profit Factor: {metrics.profit_factor:.2f}")
+    logger.info(f"Avg Holding:   {getattr(metrics, 'avg_holding_days', 'N/A')}")
+    logger.info("=" * 50)
+
+    # Persist to DuckDB
+    run_id = persist_results(result, metrics, universe, args.start, args.end)
+    logger.info(f"Results persisted. run_id={run_id}")
+
+
+if __name__ == "__main__":
+    main()

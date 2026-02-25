@@ -2,7 +2,6 @@
 Pydantic response models for the AFML Research Dashboard.
 """
 
-
 from pydantic import BaseModel
 
 # ============================================================
@@ -249,3 +248,39 @@ class RunSummary(BaseModel):
 
 class RunsResponse(BaseModel):
     runs: list[RunSummary]
+
+
+# ============================================================
+# Trade Log (Round-Trip Trades)
+# ============================================================
+
+
+class TradeLogEntry(BaseModel):
+    symbol: str
+    entry_date: str
+    entry_price: float
+    entry_reason: str
+    exit_date: str
+    exit_price: float
+    exit_reason: str
+    shares: float
+    pnl: float
+    return_pct: float
+    holding_days: int
+    max_favorable: float
+    max_adverse: float
+
+
+class TradeLogSummary(BaseModel):
+    total_trades: int
+    win_rate: float
+    profit_factor: float
+    avg_holding_days: float
+    exit_breakdown: dict[str, float]
+
+
+class TradeLogResponse(BaseModel):
+    run_id: str
+    trades: list[TradeLogEntry]
+    summary: TradeLogSummary
+    is_mock: bool = False

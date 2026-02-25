@@ -30,6 +30,9 @@ from app.models.dashboard_schemas import (
     RiskMetrics,
     RunsResponse,
     RunSummary,
+    TradeLogEntry,
+    TradeLogResponse,
+    TradeLogSummary,
     ValidationCheck,
     ValidationChecklistResponse,
 )
@@ -597,3 +600,80 @@ async def list_runs():
         for _, row in rows.iterrows()
     ]
     return RunsResponse(runs=runs)
+
+
+# ------------------------------------------------------------------
+# GET /api/dashboard/trade-log
+# ------------------------------------------------------------------
+
+
+@router.get("/dashboard/trade-log", response_model=TradeLogResponse)
+async def trade_log(run_id: str = Query(None)):
+    rid = _resolve_run_id(run_id)
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT symbol, entry_date, entry_price, entry_reason, "
+            "exit_date, exit_price, exit_reason, shares, "
+            "pnl, return_pct, holding_days, max_favorable, max_adverse "
+            "FROM derived_round_trip_trades WHERE run_id = $1 "
+            "ORDER BY exit_date DESC",
+            [rid],
+        ).fetchdf()
+
+    if rows.empty:
+        return TradeLogResponse(
+            run_id=rid,
+            trades=[],
+            summary=TradeLogSummary(
+                total_trades=0,
+                win_rate=0.0,
+                profit_factor=0.0,
+                avg_holding_days=0.0,
+                exit_breakdown={},
+            ),
+            is_mock=False,
+        )
+
+    trades = [
+        TradeLogEntry(
+            symbol=row["symbol"],
+            entry_date=str(row["entry_date"]),
+            entry_price=float(row["entry_price"]),
+            entry_reason=row["entry_reason"],
+            exit_date=str(row["exit_date"]),
+            exit_price=float(row["exit_price"]),
+            exit_reason=row["exit_reason"],
+            shares=float(row["shares"]),
+            pnl=float(row["pnl"]),
+            return_pct=float(row["return_pct"]),
+            holding_days=int(row["holding_days"]),
+            max_favorable=float(row["max_favorable"]),
+            max_adverse=float(row["max_adverse"]),
+        )
+        for _, row in rows.iterrows()
+    ]
+
+    # Build summary
+    n = len(rows)
+    winners = rows[rows["pnl"] > 0]
+    losers = rows[rows["pnl"] < 0]
+
+    win_rate = len(winners) / n if n > 0 else 0.0
+    gross_wins = float(winners["pnl"].sum()) if len(winners) > 0 else 0.0
+    gross_losses = abs(float(losers["pnl"].sum())) if len(losers) > 0 else 0.0
+    profit_factor = gross_wins / gross_losses if gross_losses > 0 else 0.0
+
+    avg_holding = float(rows["holding_days"].mean()) if n > 0 else 0.0
+
+    exit_counts = rows["exit_reason"].value_counts()
+    exit_breakdown = (exit_counts / n).to_dict() if n > 0 else {}
+
+    summary = TradeLogSummary(
+        total_trades=n,
+        win_rate=win_rate,
+        profit_factor=profit_factor,
+        avg_holding_days=avg_holding,
+        exit_breakdown=exit_breakdown,
+    )
+
+    return TradeLogResponse(run_id=rid, trades=trades, summary=summary, is_mock=False)

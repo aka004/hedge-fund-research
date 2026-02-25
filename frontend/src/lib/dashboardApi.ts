@@ -12,6 +12,7 @@ import type {
   RegimeHistoryResponse,
   KellyPipelineResponse,
   RunsResponse,
+  TradeLogResponse,
 } from '../types/dashboard'
 
 const API_BASE = '/api'
@@ -77,4 +78,8 @@ export async function fetchKellyPipeline(ticker: string, runId?: string): Promis
 
 export async function fetchRuns(): Promise<RunsResponse> {
   return get('/dashboard/runs')
+}
+
+export async function fetchTradeLog(runId?: string): Promise<TradeLogResponse> {
+  return get(`/dashboard/trade-log${qs(runId)}`)
 }

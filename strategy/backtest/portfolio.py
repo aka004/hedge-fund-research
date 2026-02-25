@@ -179,6 +179,7 @@ class PortfolioManager:
         self.portfolio = Portfolio(cash=initial_capital)
         self.costs = transaction_costs or TransactionCosts()
         self.initial_capital = initial_capital
+        self._equity_snapshots: list[tuple[date, float]] = []
 
     def buy(
         self,
@@ -369,11 +370,24 @@ class PortfolioManager:
 
         return trades
 
-    def get_returns_series(self) -> pd.Series:
-        """Calculate daily returns from trade history.
+    def record_snapshot(self, as_of_date: date) -> None:
+        """Record current portfolio equity for returns calculation.
 
-        Note: Requires equity snapshots to be tracked separately.
+        Call this after update_prices() to capture a mark-to-market snapshot.
         """
-        # This is a simplified version - full implementation would
-        # track daily equity values
-        return pd.Series(dtype=float)
+        self._equity_snapshots.append((as_of_date, self.portfolio.equity))
+
+    def get_returns_series(self) -> pd.Series:
+        """Calculate returns from recorded equity snapshots.
+
+        Requires record_snapshot() to be called periodically (e.g. each
+        rebalance date or each trading day).
+        """
+        if len(self._equity_snapshots) < 2:
+            return pd.Series(dtype=float)
+        df = pd.DataFrame(self._equity_snapshots, columns=["date", "equity"])
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        # Drop duplicate dates (keep last snapshot per day)
+        df = df[~df.index.duplicated(keep="last")]
+        return df["equity"].pct_change().dropna()

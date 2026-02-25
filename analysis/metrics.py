@@ -39,6 +39,7 @@ class PerformanceMetrics:
 def calculate_metrics(
     returns: pd.Series,
     trades: list | None = None,
+    trade_log: pd.DataFrame | None = None,
     risk_free_rate: float = 0.02,
     periods_per_year: int = 252,
 ) -> PerformanceMetrics:
@@ -46,7 +47,9 @@ def calculate_metrics(
 
     Args:
         returns: Series of period returns
-        trades: Optional list of Trade objects
+        trades: Optional list of Trade objects (legacy, from BacktestEngine)
+        trade_log: Optional DataFrame of RoundTripTrade rows (from EventDrivenEngine).
+            Preferred over `trades` when both are provided.
         risk_free_rate: Annual risk-free rate
         periods_per_year: Trading periods per year (252 for daily)
 
@@ -131,19 +134,25 @@ def calculate_metrics(
     # Calmar ratio
     calmar = cagr / abs(max_dd) if max_dd < 0 else 0.0
 
-    # Trade statistics
-    total_trades = len(trades) if trades else 0
+    # Trade statistics — prefer trade_log (round-trip) over legacy trades
+    total_trades = 0
     win_rate = 0.0
     profit_factor = 0.0
     avg_win = 0.0
     avg_loss = 0.0
 
-    if trades:
-        # Calculate PnL for each trade
+    if trade_log is not None and not trade_log.empty:
+        tm = calculate_trade_metrics(trade_log)
+        total_trades = tm.total_trades
+        win_rate = tm.win_rate
+        profit_factor = tm.profit_factor
+        avg_win = tm.avg_win
+        avg_loss = tm.avg_loss
+    elif trades:
+        # Legacy path: individual buy/sell Trade objects
         wins = []
         losses = []
         for trade in trades:
-            # Simplified PnL calculation
             if trade.side == "sell":
                 pnl = trade.gross_value - (trade.commission + trade.slippage)
             else:
