@@ -18,17 +18,9 @@ try:
 except ImportError:
     HouseClerkProvider = None  # type: ignore[misc, assignment]
 
-# Optional providers - only available if dependencies are installed
 try:
-    from data.providers.finnhub import FinnhubProvider
+    from data.providers.openbb_provider import OpenBBProvider
 
-    __all__.append("FinnhubProvider")
+    __all__.append("OpenBBProvider")
 except ImportError:
-    FinnhubProvider = None  # type: ignore[misc, assignment]
-
-try:
-    from data.providers.reddit import RedditProvider
-
-    __all__.append("RedditProvider")
-except ImportError:
-    RedditProvider = None  # type: ignore[misc, assignment]
+    OpenBBProvider = None  # type: ignore[misc, assignment]
