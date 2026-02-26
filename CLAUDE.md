@@ -56,7 +56,7 @@ weights = hrp(returns_df).weights
 ## Key Design Decisions
 
 - **Local only**: No cloud, no paid subscriptions
-- **Free data**: Yahoo Finance + StockTwits free tier
+- **Free data**: Yahoo Finance + StockTwits + OpenBB (SEC, Gov, FRED)
 - **Parquet + DuckDB**: Zero ops data storage
 - **Python**: pandas/numpy, clean readable code
 
@@ -110,6 +110,10 @@ if df.isna().any().any():
 ```
 afml/               # AFML techniques (MANDATORY - see above)
 data/providers/     # API integrations
+  yahoo.py          #   Price/fundamentals (free, no key)
+  stocktwits.py     #   Social sentiment (free, no key)
+  house_clerk.py    #   Congressional trades (free, no key)
+  openbb_provider.py #  SEC insider, gov trades, FRED macro (via OpenBB)
 data/storage/       # Parquet files
 strategy/signals/   # Signal generators
 strategy/backtest/  # Backtesting engine

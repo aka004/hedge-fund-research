@@ -31,6 +31,8 @@ Ranking & Selection (top 10-20 stocks)
 | Data storage | Parquet + DuckDB | Zero ops, fast analytics |
 | Price data | Yahoo Finance | Free, sufficient for research |
 | Social data | StockTwits | Free tier, pre-labeled sentiment |
+| Insider/Congressional | OpenBB (SEC, Gov) | Free, no API key needed |
+| Macro data | OpenBB (FRED) | Free with API key registration |
 | Framework | Custom Python | Full control, learning opportunity |
 
 ## Project Structure
@@ -40,8 +42,10 @@ hedge-fund-research/
 ├── data/
 │   ├── providers/           # Data source implementations
 │   │   ├── base.py          # Abstract interfaces
-│   │   ├── yahoo_finance.py # Price/fundamental data
-│   │   └── stocktwits.py    # Social sentiment data
+│   │   ├── yahoo.py         # Price/fundamental data
+│   │   ├── stocktwits.py    # Social sentiment data
+│   │   ├── house_clerk.py   # Congressional trades (free)
+│   │   └── openbb_provider.py  # SEC insider, gov trades, FRED macro
 │   └── storage/
 │       ├── parquet/         # Raw cached data
 │       └── cache/           # Query cache
@@ -105,6 +109,7 @@ python scripts/run_backtest.py --strategy momentum_value_social
 - Python 3.11+
 - pandas, numpy (data manipulation)
 - yfinance (price data)
+- openbb (SEC insider, gov trades, FRED macro, news)
 - duckdb (fast queries)
 - pyarrow (parquet storage)
 - requests (API calls)
@@ -116,6 +121,10 @@ python scripts/run_backtest.py --strategy momentum_value_social
 |--------|-----------|------|-------------|
 | Yahoo Finance | OHLCV, fundamentals | Free | Unofficial, be respectful |
 | StockTwits | Sentiment, mentions | Free tier | 200 requests/hour |
+| OpenBB (SEC) | Insider trading (Form 4) | Free, no key | SEC EDGAR rate limits |
+| OpenBB (Gov) | Congressional trades | Free, no key | Government data |
+| OpenBB (FRED) | Macro series (GDP, CPI, rates) | Free key required | Unlimited |
+| House Stock Watcher | Congressional trades | Free, no key | Public GitHub data |
 
 ## Backtest Safeguards
 

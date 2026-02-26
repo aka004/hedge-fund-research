@@ -44,5 +44,4 @@ politicians:
     notes: "Former Senator, active trader"
 
   # Add more politicians as needed
-  # Note: Use exact names as they appear in Quiver database
-  # Check Quiver dashboard: https://www.quiverquant.com/congresstrading/
+  # Data sourced via OpenBB government_us provider and House Stock Watcher
