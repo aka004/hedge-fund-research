@@ -47,9 +47,10 @@ def calculate_metrics(
 
     Args:
         returns: Series of period returns
-        trades: Optional list of Trade objects (legacy, from BacktestEngine)
-        trade_log: Optional DataFrame of RoundTripTrade rows (from EventDrivenEngine).
-            Preferred over `trades` when both are provided.
+        trades: Optional list of Trade objects (legacy; ignored if trade_log provided)
+        trade_log: Optional DataFrame from event engine (round-trip trades). When
+            provided, win_rate, profit_factor, avg_win, avg_loss, total_trades
+            are computed from it (Phase 1.8).
         risk_free_rate: Annual risk-free rate
         periods_per_year: Trading periods per year (252 for daily)
 
@@ -134,7 +135,7 @@ def calculate_metrics(
     # Calmar ratio
     calmar = cagr / abs(max_dd) if max_dd < 0 else 0.0
 
-    # Trade statistics — prefer trade_log (round-trip) over legacy trades
+    # Trade statistics: prefer trade_log (round-trip) over legacy trades list
     total_trades = 0
     win_rate = 0.0
     profit_factor = 0.0
@@ -146,10 +147,13 @@ def calculate_metrics(
         total_trades = tm.total_trades
         win_rate = tm.win_rate
         profit_factor = tm.profit_factor
-        avg_win = tm.avg_win
-        avg_loss = tm.avg_loss
+        # PerformanceMetrics uses dollar amounts for avg_win/avg_loss
+        winners = trade_log[trade_log["pnl"] > 0]
+        losers = trade_log[trade_log["pnl"] < 0]
+        avg_win = float(winners["pnl"].mean()) if len(winners) > 0 else 0.0
+        avg_loss = float(abs(losers["pnl"].mean())) if len(losers) > 0 else 0.0
     elif trades:
-        # Legacy path: individual buy/sell Trade objects
+        # Legacy: calculate PnL from list of Trade (buy/sell) objects
         wins = []
         losses = []
         for trade in trades:

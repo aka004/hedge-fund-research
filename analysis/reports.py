@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -12,6 +11,7 @@ from analysis.obsidian_reports import (
     save_obsidian_note,
 )
 from strategy.backtest.engine import BacktestResult
+from strategy.backtest.event_engine import EventEngineResult
 
 
 def generate_summary_report(
@@ -34,7 +34,11 @@ def generate_summary_report(
         "",
         f"Period: {result.start_date} to {result.end_date}",
         f"Initial Capital: ${result.config.initial_capital:,.2f}",
-        f"Final Equity: ${result.equity_curve['equity'].iloc[-1]:,.2f}" if not result.equity_curve.empty else "",
+        (
+            f"Final Equity: ${result.equity_curve['equity'].iloc[-1]:,.2f}"
+            if not result.equity_curve.empty
+            else ""
+        ),
         "",
         "-" * 40,
         "RETURNS",
@@ -93,17 +97,19 @@ def generate_trade_log(
 
     trades_data = []
     for trade in result.trades:
-        trades_data.append({
-            "date": trade.date,
-            "symbol": trade.symbol,
-            "side": trade.side,
-            "shares": trade.shares,
-            "price": trade.price,
-            "gross_value": trade.gross_value,
-            "commission": trade.commission,
-            "slippage": trade.slippage,
-            "net_value": trade.net_value,
-        })
+        trades_data.append(
+            {
+                "date": trade.date,
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "shares": trade.shares,
+                "price": trade.price,
+                "gross_value": trade.gross_value,
+                "commission": trade.commission,
+                "slippage": trade.slippage,
+                "net_value": trade.net_value,
+            }
+        )
 
     return pd.DataFrame(trades_data)
 
@@ -125,11 +131,13 @@ def generate_position_report(
     rows = []
     for ph in result.positions_history:
         for symbol, weight in ph["positions"].items():
-            rows.append({
-                "date": ph["date"],
-                "symbol": symbol,
-                "weight": weight,
-            })
+            rows.append(
+                {
+                    "date": ph["date"],
+                    "symbol": symbol,
+                    "weight": weight,
+                }
+            )
 
     return pd.DataFrame(rows)
 
@@ -197,6 +205,125 @@ def save_report_bundle(
     }
 
     import json
+
+    metrics_path = output_dir / f"{prefix}_metrics.json"
+    metrics_path.write_text(json.dumps(metrics_dict, indent=2))
+    saved_files["metrics"] = metrics_path
+
+    return saved_files
+
+
+def generate_summary_report_event(
+    result: EventEngineResult,
+    metrics: PerformanceMetrics,
+) -> str:
+    """Generate a text summary report for an event-driven backtest.
+
+    Args:
+        result: Event engine result (equity curve, trade log)
+        metrics: Performance metrics (e.g. from calculate_metrics(result.daily_returns, trade_log=result.trade_log))
+
+    Returns:
+        Formatted text report
+    """
+    final_equity = (
+        result.equity_curve["equity"].iloc[-1]
+        if not result.equity_curve.empty and "equity" in result.equity_curve.columns
+        else result.config.initial_capital
+    )
+    lines = [
+        "=" * 60,
+        "EVENT BACKTEST PERFORMANCE REPORT",
+        "=" * 60,
+        "",
+        f"Period: {result.start_date} to {result.end_date}",
+        f"Initial Capital: ${result.config.initial_capital:,.2f}",
+        f"Final Equity: ${final_equity:,.2f}",
+        "",
+        "-" * 40,
+        "RETURNS",
+        "-" * 40,
+        f"Total Return: {metrics.total_return * 100:.2f}%",
+        f"CAGR: {metrics.cagr * 100:.2f}%",
+        f"Annualized Volatility: {metrics.annualized_volatility * 100:.2f}%",
+        "",
+        "-" * 40,
+        "RISK-ADJUSTED METRICS",
+        "-" * 40,
+        f"Sharpe Ratio: {metrics.sharpe_ratio:.2f}",
+        f"Sortino Ratio: {metrics.sortino_ratio:.2f}",
+        f"Calmar Ratio: {metrics.calmar_ratio:.2f}",
+        "",
+        "-" * 40,
+        "DRAWDOWN",
+        "-" * 40,
+        f"Max Drawdown: {metrics.max_drawdown * 100:.2f}%",
+        f"Max Drawdown Duration: {metrics.max_drawdown_duration_days} days",
+        "",
+        "-" * 40,
+        "TRADING STATISTICS (from trade log)",
+        "-" * 40,
+        f"Total Trades: {metrics.total_trades}",
+        f"Win Rate: {metrics.win_rate * 100:.1f}%",
+        f"Profit Factor: {metrics.profit_factor:.2f}",
+        f"Average Win: ${metrics.avg_win:,.2f}",
+        f"Average Loss: ${metrics.avg_loss:,.2f}",
+        "",
+        "=" * 60,
+    ]
+    return "\n".join(lines)
+
+
+def save_event_report(
+    result: EventEngineResult,
+    metrics: PerformanceMetrics,
+    output_dir: Path,
+    prefix: str = "event_backtest",
+) -> dict[str, Path]:
+    """Save event backtest report bundle (summary, equity, trade log, metrics).
+
+    Args:
+        result: Event engine result
+        metrics: Performance metrics
+        output_dir: Directory to save outputs
+        prefix: Filename prefix
+
+    Returns:
+        Dictionary of saved file paths
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    saved_files = {}
+
+    summary_path = output_dir / f"{prefix}_summary.txt"
+    summary_path.write_text(generate_summary_report_event(result, metrics))
+    saved_files["summary"] = summary_path
+
+    if not result.equity_curve.empty:
+        equity_path = output_dir / f"{prefix}_equity.csv"
+        result.equity_curve.to_csv(equity_path, index=False)
+        saved_files["equity"] = equity_path
+
+    if not result.trade_log.empty:
+        trades_path = output_dir / f"{prefix}_trades.csv"
+        result.trade_log.to_csv(trades_path, index=False)
+        saved_files["trades"] = trades_path
+
+    import json
+
+    metrics_dict = {
+        "total_return": metrics.total_return,
+        "cagr": metrics.cagr,
+        "annualized_volatility": metrics.annualized_volatility,
+        "sharpe_ratio": metrics.sharpe_ratio,
+        "sortino_ratio": metrics.sortino_ratio,
+        "calmar_ratio": metrics.calmar_ratio,
+        "max_drawdown": metrics.max_drawdown,
+        "max_drawdown_duration_days": metrics.max_drawdown_duration_days,
+        "total_trades": metrics.total_trades,
+        "win_rate": metrics.win_rate,
+        "profit_factor": metrics.profit_factor,
+    }
     metrics_path = output_dir / f"{prefix}_metrics.json"
     metrics_path.write_text(json.dumps(metrics_dict, indent=2))
     saved_files["metrics"] = metrics_path
@@ -207,31 +334,35 @@ def save_report_bundle(
 def save_obsidian_report(
     result: BacktestResult,
     metrics: PerformanceMetrics,
-    backtest_id: Optional[str] = None,
+    backtest_id: str | None = None,
     obsidian: bool = True,
 ) -> Path:
     """Save an Obsidian-formatted backtest report.
-    
+
     Args:
         result: Backtest result
         metrics: Performance metrics
         backtest_id: Optional backtest identifier
         obsidian: If True, save to Obsidian vault (default: True)
-        
+
     Returns:
         Path to saved Obsidian note
     """
     if backtest_id is None:
         backtest_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+
     # Convert result and metrics to dictionaries
     result_dict = {
         "start_date": str(result.start_date),
         "end_date": str(result.end_date),
         "initial_capital": result.config.initial_capital,
-        "final_equity": result.equity_curve["equity"].iloc[-1] if not result.equity_curve.empty else result.config.initial_capital,
+        "final_equity": (
+            result.equity_curve["equity"].iloc[-1]
+            if not result.equity_curve.empty
+            else result.config.initial_capital
+        ),
     }
-    
+
     metrics_dict = {
         "total_return": metrics.total_return,
         "cagr": metrics.cagr,
@@ -249,19 +380,19 @@ def save_obsidian_report(
         "skewness": metrics.skewness,
         "kurtosis": metrics.kurtosis,
     }
-    
+
     # Generate Obsidian content
     obsidian_content = generate_backtest_report_obsidian(
         result_dict,
         metrics_dict,
         backtest_id=backtest_id,
     )
-    
+
     # Save to Obsidian vault
     obsidian_path = save_obsidian_note(
         obsidian_content,
         f"{backtest_id}-backtest.md",
         subfolder="Research/Backtests",
     )
-    
+
     return obsidian_path
