@@ -6,6 +6,11 @@ from strategy.backtest.engine import (
     BacktestResult,
     WalkForwardValidator,
 )
+from strategy.backtest.event_backtest import (
+    EventBacktestEngine,
+    SurpriseBacktestConfig,
+    SurpriseBacktestResult,
+)
 from strategy.backtest.event_engine import (
     EventDrivenEngine,
     EventEngineConfig,
@@ -26,6 +31,9 @@ from strategy.backtest.portfolio import (
 )
 
 __all__ = [
+    "SurpriseBacktestConfig",
+    "SurpriseBacktestResult",
+    "EventBacktestEngine",
     "Position",
     "Trade",
     "RoundTripTrade",

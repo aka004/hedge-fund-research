@@ -9,10 +9,25 @@ Reference: López de Prado, M. (2018). Advances in Financial Machine Learning. W
 
 from .bet_sizing import KellyResult, discrete_kelly, kelly_criterion
 from .bootstrap import average_uniqueness, sequential_bootstrap
-from .checks import AdfResult, stationarity_check
+from .checks import (
+    AdfResult,
+    RollingStationarityResult,
+    rolling_statn,
+    stationarity_check,
+)
 from .cpcv import CombPurgedKFold, CPCVResult
 from .cusum import CUSUMResult, cusum_filter
 from .cv import PurgedKFold, purged_kfold
+from .diagnostics import (
+    ChooserResult,
+    CscvResult,
+    EntropyDiagnosticResult,
+    McptResult,
+    cscv_symmetric,
+    entropy_diagnostic,
+    monte_carlo_permutation_test,
+    parameter_chooser,
+)
 from .labels import TripleBarrierLabels, triple_barrier
 from .meta_labeling import MetaLabelResult, meta_label_fit, meta_label_predict
 from .metrics import deflated_sharpe, psr
@@ -59,6 +74,17 @@ __all__ = [
     # Checks
     "stationarity_check",
     "AdfResult",
+    "rolling_statn",
+    "RollingStationarityResult",
+    # Diagnostics (Masters)
+    "entropy_diagnostic",
+    "EntropyDiagnosticResult",
+    "monte_carlo_permutation_test",
+    "McptResult",
+    "parameter_chooser",
+    "ChooserResult",
+    "cscv_symmetric",
+    "CscvResult",
 ]
 
 __version__ = "0.1.0"
