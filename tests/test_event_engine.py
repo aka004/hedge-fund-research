@@ -205,6 +205,46 @@ class TestExitManager:
         )
         assert len(signals_high) == 0
 
+    def test_cusum_reversal_exit(self):
+        """Downside CUSUM fire on held position emits cusum_reversal."""
+        trade = _make_trade(entry_price=100.0)
+        # Price is within barriers — no profit/stop triggered
+        signals = self.manager.check_exits(
+            positions={"AAPL": trade},
+            today=date(2024, 1, 10),
+            prices={"AAPL": 99.0},  # within barriers
+            vol={"AAPL": 0.02},
+            cusum_downside={"AAPL"},  # CUSUM fired downside
+        )
+        assert len(signals) == 1
+        assert signals[0].reason == "cusum_reversal"
+
+    def test_cusum_reversal_priority_below_profit_target(self):
+        """If profit target also triggers, profit_target wins over cusum_reversal."""
+        trade = _make_trade(entry_price=100.0)
+        # Price above upper barrier AND CUSUM downside fired
+        signals = self.manager.check_exits(
+            positions={"AAPL": trade},
+            today=date(2024, 1, 10),
+            prices={"AAPL": 110.0},  # above upper barrier (100*(1+2*0.02)=104)
+            vol={"AAPL": 0.02},
+            cusum_downside={"AAPL"},
+        )
+        assert len(signals) == 1
+        assert signals[0].reason == "profit_target"
+
+    def test_no_cusum_downside_no_reversal(self):
+        """If cusum_downside is empty, no cusum_reversal emitted."""
+        trade = _make_trade(entry_price=100.0)
+        signals = self.manager.check_exits(
+            positions={"AAPL": trade},
+            today=date(2024, 1, 10),
+            prices={"AAPL": 99.0},
+            vol={"AAPL": 0.02},
+            cusum_downside=set(),
+        )
+        assert len(signals) == 0
+
 
 # ---------------------------------------------------------------------------
 # EventDrivenEngine tests

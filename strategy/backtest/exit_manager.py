@@ -48,6 +48,7 @@ class ExitManager:
         today: date,
         prices: dict[str, float],
         vol: dict[str, float],
+        cusum_downside: set[str] | None = None,
     ) -> list[ExitSignal]:
         """Check all open positions for barrier breaches.
 
@@ -56,10 +57,16 @@ class ExitManager:
             today: Current date (close of day).
             prices: Today's close prices per symbol.
             vol: Today's daily volatility per symbol.
+            cusum_downside: Symbols where downside CUSUM fired today.
 
         Returns:
             List of ExitSignals for positions that breached a barrier.
+
+        Priority: profit_target > cusum_reversal > stop_loss > timeout.
         """
+        if cusum_downside is None:
+            cusum_downside = set()
+
         signals: list[ExitSignal] = []
 
         for symbol, trade in positions.items():
@@ -73,12 +80,21 @@ class ExitManager:
             upper = trade.entry_price * (1.0 + self.config.profit_take_mult * daily_vol)
             lower = trade.entry_price * (1.0 - self.config.stop_loss_mult * daily_vol)
 
-            # Check order: profit target > stop loss > timeout
+            # Check order: profit_target > cusum_reversal > stop_loss > timeout
             if close_price >= upper:
                 signals.append(
                     ExitSignal(
                         symbol=symbol,
                         reason="profit_target",
+                        trigger_date=today,
+                        trigger_price=close_price,
+                    )
+                )
+            elif symbol in cusum_downside:
+                signals.append(
+                    ExitSignal(
+                        symbol=symbol,
+                        reason="cusum_reversal",
                         trigger_date=today,
                         trigger_price=close_price,
                     )
