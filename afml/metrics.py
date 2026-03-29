@@ -87,6 +87,29 @@ def sharpe_standard_error(
     return np.sqrt(max(se_sq, 1e-10))
 
 
+def expected_max_sharpe(n_strategies: int) -> float:
+    """Expected maximum Sharpe ratio from N independent random strategies.
+
+    Bailey & López de Prado (2014). Returns dimensionless value in same
+    units as annualized Sharpe. Used for DSR multiple-testing correction.
+
+    Parameters
+    ----------
+    n_strategies : int
+        Total number of strategies tried (cumulative across all sessions).
+
+    Returns
+    -------
+    float
+        Expected maximum Sharpe — use as benchmark in deflated_sharpe().
+    """
+    if n_strategies <= 1:
+        return 0.0
+    return (1 - np.euler_gamma) * stats.norm.ppf(
+        1 - 1 / n_strategies
+    ) + np.euler_gamma * stats.norm.ppf(1 - 1 / (n_strategies * np.e))
+
+
 def deflated_sharpe(
     returns: np.ndarray,
     benchmark_sharpe: float = 0.0,
@@ -143,11 +166,9 @@ def deflated_sharpe(
 
     # Adjust benchmark for multiple testing (Bailey & López de Prado)
     if n_strategies_tested > 1:
-        # Expected maximum Sharpe from N random strategies
-        expected_max_sharpe = (1 - np.euler_gamma) * stats.norm.ppf(
-            1 - 1 / n_strategies_tested
-        ) + np.euler_gamma * stats.norm.ppf(1 - 1 / (n_strategies_tested * np.e))
-        benchmark_sharpe = max(benchmark_sharpe, expected_max_sharpe)
+        benchmark_sharpe = max(
+            benchmark_sharpe, expected_max_sharpe(n_strategies_tested)
+        )
 
     # Standard error of Sharpe
     se = sharpe_standard_error(sharpe, n, skewness, kurtosis)

@@ -26,3 +26,19 @@ def test_psr_benchmark_not_deflated_by_annualization():
         f"PSR with N=10 ({result_n10.psr:.3f}) should be lower than "
         f"PSR with N=1 ({result_n1.psr:.3f}) — more strategies = harder to pass"
     )
+
+
+def test_expected_max_sharpe_standalone():
+    """expected_max_sharpe() should exist as a standalone function."""
+    from afml.metrics import expected_max_sharpe
+
+    # N=1: no multiple testing, benchmark = 0
+    assert expected_max_sharpe(1) == 0.0
+
+    # N grows: expected max Sharpe increases (harder to beat)
+    e10 = expected_max_sharpe(10)
+    e100 = expected_max_sharpe(100)
+    assert e100 > e10 > 0.0, "More trials = higher expected max Sharpe"
+
+    # Typical range: for N=10, should be around 1.0-2.0
+    assert 0.5 < e10 < 3.0, f"Unexpected value: {e10}"
