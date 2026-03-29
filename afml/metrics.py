@@ -144,10 +144,9 @@ def deflated_sharpe(
     # Adjust benchmark for multiple testing (Bailey & López de Prado)
     if n_strategies_tested > 1:
         # Expected maximum Sharpe from N random strategies
-        expected_max_sharpe = (
-            (1 - np.euler_gamma) * stats.norm.ppf(1 - 1 / n_strategies_tested)
-            + np.euler_gamma * stats.norm.ppf(1 - 1 / (n_strategies_tested * np.e))
-        ) / np.sqrt(annualization)
+        expected_max_sharpe = (1 - np.euler_gamma) * stats.norm.ppf(
+            1 - 1 / n_strategies_tested
+        ) + np.euler_gamma * stats.norm.ppf(1 - 1 / (n_strategies_tested * np.e))
         benchmark_sharpe = max(benchmark_sharpe, expected_max_sharpe)
 
     # Standard error of Sharpe
