@@ -25,6 +25,12 @@ class EventEngineConfig:
     transaction_costs: TransactionCosts = field(default_factory=TransactionCosts)
     exit_config: ExitConfig = field(default_factory=ExitConfig)
     benchmark_symbol: str = "SPY"
+    # Phase 2: CUSUM / regime / meta-label controls
+    cusum_recency_days: int = 5  # days to look back for recent upside CUSUM fire
+    meta_label_min_samples: int = 50  # min CUSUM events before meta-label activates
+    use_cusum_gate: bool = True  # enable CUSUM entry gate
+    use_regime_multiplier: bool = True  # enable 3-layer regime multiplier
+    use_meta_labeling: bool = True  # enable rolling meta-label sizing
 
 
 @dataclass
@@ -58,6 +64,8 @@ class EventDrivenEngine:
         universe: list[str],
         close_prices: pd.DataFrame,
         open_prices: pd.DataFrame,
+        macro_prices: pd.DataFrame | None = None,
+        sentiment_prices: pd.DataFrame | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
     ) -> EventEngineResult:
@@ -85,6 +93,15 @@ class EventDrivenEngine:
 
         # Compute rebalance dates
         rebalance_dates = self._get_rebalance_dates(trading_days)
+
+        # Pre-compute CUSUM event sets for all symbols (once at startup)
+        if self.config.use_cusum_gate:
+            cusum_upside_dates, cusum_downside_dates = self._precompute_cusum(
+                close_prices
+            )
+        else:
+            cusum_upside_dates = {}
+            cusum_downside_dates = {}
 
         # State
         cash = self.config.initial_capital
@@ -135,6 +152,19 @@ class EventDrivenEngine:
 
             # --- Step B: If rebalance day, enter new positions at today's OPEN ---
             if today in rebalance_dates:
+                # Compute which symbols had upside CUSUM fire within recency window
+                if self.config.use_cusum_gate:
+                    recency_cutoff = today - timedelta(
+                        days=self.config.cusum_recency_days
+                    )
+                    upside_cusum = {
+                        sym
+                        for sym, dates in cusum_upside_dates.items()
+                        if any(recency_cutoff <= d <= today for d in dates)
+                    }
+                else:
+                    upside_cusum = set(close_prices.columns)  # allow all
+
                 cash, positions, completed_trades = self._handle_rebalance(
                     today=today,
                     universe=universe,
@@ -142,6 +172,7 @@ class EventDrivenEngine:
                     cash=cash,
                     positions=positions,
                     completed_trades=completed_trades,
+                    upside_cusum=upside_cusum,
                 )
 
             # --- Step C: Mark-to-market at today's CLOSE ---
@@ -154,8 +185,17 @@ class EventDrivenEngine:
                     trade.max_adverse = min(trade.max_adverse, current_return)
 
             # --- Step D: Check exit barriers at today's CLOSE ---
+            today_downside = cusum_downside_dates.get("_today_fires_", set())
+            if self.config.use_cusum_gate and cusum_downside_dates:
+                today_downside = {
+                    sym for sym, dates in cusum_downside_dates.items() if today in dates
+                }
             new_exits = self.exit_manager.check_exits(
-                positions, today, today_close, today_vol
+                positions,
+                today,
+                today_close,
+                today_vol,
+                cusum_downside=today_downside,
             )
             pending_exits.extend(new_exits)
 
@@ -197,6 +237,7 @@ class EventDrivenEngine:
         cash: float,
         positions: dict[str, RoundTripTrade],
         completed_trades: list[RoundTripTrade],
+        upside_cusum: set[str] | None = None,
     ) -> tuple[float, dict[str, RoundTripTrade], list[RoundTripTrade]]:
         """Process rebalance: exit stale, enter new. Returns (cash, positions, completed)."""
         # Generate signals using data through YESTERDAY (no look-ahead)
@@ -247,6 +288,10 @@ class EventDrivenEngine:
                 continue
             if len(positions) >= self.config.max_positions:
                 break
+            # CUSUM entry gate: skip if no recent upside fire
+            if self.config.use_cusum_gate and upside_cusum is not None:
+                if symbol not in upside_cusum:
+                    continue
 
             # Cap at max_position_weight
             capped_weight = min(weight, self.config.max_position_weight)
@@ -285,6 +330,54 @@ class EventDrivenEngine:
             )
 
         return cash, positions, completed_trades
+
+    def _precompute_cusum(
+        self,
+        close_prices: pd.DataFrame,
+    ) -> tuple[dict[str, set], dict[str, set]]:
+        """Pre-compute CUSUM upside and downside fire dates for all symbols.
+
+        Returns
+        -------
+        upside_dates : dict[str, set[date]]
+            Per-symbol set of dates where upside CUSUM fired.
+        downside_dates : dict[str, set[date]]
+            Per-symbol set of dates where downside CUSUM fired.
+        """
+        from afml.cusum import cusum_filter
+
+        upside_dates: dict[str, set] = {}
+        downside_dates: dict[str, set] = {}
+
+        for symbol in close_prices.columns:
+            col = close_prices[symbol].dropna()
+            if len(col) < 30:
+                upside_dates[symbol] = set()
+                downside_dates[symbol] = set()
+                continue
+
+            try:
+                result = cusum_filter(col)
+            except Exception:
+                upside_dates[symbol] = set()
+                downside_dates[symbol] = set()
+                continue
+
+            # Upside fires: cusum_positive drops to 0 from a positive value (reset on event)
+            pos = result.cusum_positive
+            upside_resets = pos[(pos == 0.0) & (pos.shift(1) > 0)]
+            upside_dates[symbol] = {
+                pd.Timestamp(ts).date() for ts in upside_resets.index
+            }
+
+            # Downside fires: cusum_negative rises to 0 from a negative value
+            neg = result.cusum_negative
+            downside_resets = neg[(neg == 0.0) & (neg.shift(1) < 0)]
+            downside_dates[symbol] = {
+                pd.Timestamp(ts).date() for ts in downside_resets.index
+            }
+
+        return upside_dates, downside_dates
 
     def _calculate_weights(
         self,

@@ -388,6 +388,7 @@ class TestEventDrivenEngine:
             "stop_loss",
             "timeout",
             "rebalance_out",
+            "cusum_reversal",
         }
 
         for reason in trade_log["entry_reason"].unique():
@@ -568,3 +569,107 @@ class TestTradeMetrics:
         assert returns[2] == pytest.approx(10 / 150)  # GOOGL: ~6.67%
         assert returns[3] == pytest.approx(-5 / 120)  # AMZN: ~-4.17%
         assert returns[4] == pytest.approx(0.125)  # TSLA: +12.5%
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 config + CUSUM gate tests
+# ---------------------------------------------------------------------------
+
+
+def test_engine_config_has_phase2_fields():
+    """EventEngineConfig should have Phase 2 fields with correct defaults."""
+    config = EventEngineConfig()
+    assert hasattr(config, "cusum_recency_days")
+    assert hasattr(config, "meta_label_min_samples")
+    assert hasattr(config, "use_cusum_gate")
+    assert hasattr(config, "use_regime_multiplier")
+    assert hasattr(config, "use_meta_labeling")
+    assert config.cusum_recency_days == 5
+    assert config.meta_label_min_samples == 50
+    assert config.use_cusum_gate is True
+    assert config.use_regime_multiplier is True
+    assert config.use_meta_labeling is True
+
+
+class TestCUSUMGate:
+    """CUSUM entry gate: only enter if upside fire within recency window."""
+
+    @pytest.fixture()
+    def universe(self):
+        return ["AAPL", "MSFT", "GOOGL"]
+
+    @pytest.fixture()
+    def prices(self, universe):
+        """260 trading days of synthetic prices including SPY."""
+        symbols = universe + ["SPY"]
+        close_df, open_df = _make_synthetic_prices(
+            symbols, n_days=260, start=date(2023, 1, 2), seed=7
+        )
+        return close_df, open_df
+
+    @pytest.fixture()
+    def stub_combiner(self, universe):
+        picks = [
+            Signal(symbol=sym, date=date(2023, 1, 2), signal_name="test", score=0.8)
+            for sym in universe
+        ]
+        return StubSignalCombiner(picks)
+
+    def test_cusum_gate_disabled_allows_entries(self, universe, prices, stub_combiner):
+        """With use_cusum_gate=False, entries happen as before (no CUSUM filter)."""
+        close_df, open_df = prices
+        config = EventEngineConfig(
+            initial_capital=100_000.0,
+            max_positions=20,
+            max_position_weight=0.10,
+            rebalance_frequency="monthly",
+            exit_config=ExitConfig(
+                profit_take_mult=100.0, stop_loss_mult=100.0, max_holding_days=999
+            ),
+            use_cusum_gate=False,
+            use_regime_multiplier=False,
+            use_meta_labeling=False,
+        )
+        engine = EventDrivenEngine(stub_combiner, config)
+        result = engine.run(universe, close_df, open_df)
+
+        # Without CUSUM gate, positions should be entered on rebalance day
+        assert not result.trade_log.empty or len(result.open_positions) > 0
+
+    def test_cusum_gate_enabled_engine_runs(self, universe, prices, stub_combiner):
+        """Engine with CUSUM gate enabled should run without error."""
+        close_df, open_df = prices
+        config = EventEngineConfig(
+            initial_capital=100_000.0,
+            max_positions=20,
+            max_position_weight=0.10,
+            rebalance_frequency="monthly",
+            exit_config=ExitConfig(
+                profit_take_mult=100.0, stop_loss_mult=100.0, max_holding_days=999
+            ),
+            use_cusum_gate=True,
+            cusum_recency_days=5,
+            use_regime_multiplier=False,
+            use_meta_labeling=False,
+        )
+        engine = EventDrivenEngine(stub_combiner, config)
+        result = engine.run(universe, close_df, open_df)
+
+        assert result.equity_curve is not None
+        assert len(result.equity_curve) == len(close_df)
+
+    def test_run_accepts_macro_and_sentiment_prices(
+        self, universe, prices, stub_combiner
+    ):
+        """run() should accept optional macro_prices and sentiment_prices kwargs."""
+        close_df, open_df = prices
+        config = EventEngineConfig(
+            use_cusum_gate=False, use_regime_multiplier=False, use_meta_labeling=False
+        )
+        engine = EventDrivenEngine(stub_combiner, config)
+
+        # Passing None explicitly should work fine
+        result = engine.run(
+            universe, close_df, open_df, macro_prices=None, sentiment_prices=None
+        )
+        assert result.equity_curve is not None
