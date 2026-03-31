@@ -205,6 +205,46 @@ class TestExitManager:
         )
         assert len(signals_high) == 0
 
+    def test_cusum_reversal_exit(self):
+        """Downside CUSUM fire on held position emits cusum_reversal."""
+        trade = _make_trade(entry_price=100.0)
+        # Price is within barriers — no profit/stop triggered
+        signals = self.manager.check_exits(
+            positions={"AAPL": trade},
+            today=date(2024, 1, 10),
+            prices={"AAPL": 99.0},  # within barriers
+            vol={"AAPL": 0.02},
+            cusum_downside={"AAPL"},  # CUSUM fired downside
+        )
+        assert len(signals) == 1
+        assert signals[0].reason == "cusum_reversal"
+
+    def test_cusum_reversal_priority_below_profit_target(self):
+        """If profit target also triggers, profit_target wins over cusum_reversal."""
+        trade = _make_trade(entry_price=100.0)
+        # Price above upper barrier AND CUSUM downside fired
+        signals = self.manager.check_exits(
+            positions={"AAPL": trade},
+            today=date(2024, 1, 10),
+            prices={"AAPL": 110.0},  # above upper barrier (100*(1+2*0.02)=104)
+            vol={"AAPL": 0.02},
+            cusum_downside={"AAPL"},
+        )
+        assert len(signals) == 1
+        assert signals[0].reason == "profit_target"
+
+    def test_no_cusum_downside_no_reversal(self):
+        """If cusum_downside is empty, no cusum_reversal emitted."""
+        trade = _make_trade(entry_price=100.0)
+        signals = self.manager.check_exits(
+            positions={"AAPL": trade},
+            today=date(2024, 1, 10),
+            prices={"AAPL": 99.0},
+            vol={"AAPL": 0.02},
+            cusum_downside=set(),
+        )
+        assert len(signals) == 0
+
 
 # ---------------------------------------------------------------------------
 # EventDrivenEngine tests
@@ -348,6 +388,7 @@ class TestEventDrivenEngine:
             "stop_loss",
             "timeout",
             "rebalance_out",
+            "cusum_reversal",
         }
 
         for reason in trade_log["entry_reason"].unique():
@@ -528,3 +569,220 @@ class TestTradeMetrics:
         assert returns[2] == pytest.approx(10 / 150)  # GOOGL: ~6.67%
         assert returns[3] == pytest.approx(-5 / 120)  # AMZN: ~-4.17%
         assert returns[4] == pytest.approx(0.125)  # TSLA: +12.5%
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 config + CUSUM gate tests
+# ---------------------------------------------------------------------------
+
+
+def test_engine_config_has_phase2_fields():
+    """EventEngineConfig should have Phase 2 fields with correct defaults."""
+    config = EventEngineConfig()
+    assert hasattr(config, "cusum_recency_days")
+    assert hasattr(config, "meta_label_min_samples")
+    assert hasattr(config, "use_cusum_gate")
+    assert hasattr(config, "use_regime_multiplier")
+    assert hasattr(config, "use_meta_labeling")
+    assert config.cusum_recency_days == 5
+    assert config.meta_label_min_samples == 50
+    assert config.use_cusum_gate is True
+    assert config.use_regime_multiplier is True
+    assert config.use_meta_labeling is True
+
+
+class TestCUSUMGate:
+    """CUSUM entry gate: only enter if upside fire within recency window."""
+
+    @pytest.fixture()
+    def universe(self):
+        return ["AAPL", "MSFT", "GOOGL"]
+
+    @pytest.fixture()
+    def prices(self, universe):
+        """260 trading days of synthetic prices including SPY."""
+        symbols = universe + ["SPY"]
+        close_df, open_df = _make_synthetic_prices(
+            symbols, n_days=260, start=date(2023, 1, 2), seed=7
+        )
+        return close_df, open_df
+
+    @pytest.fixture()
+    def stub_combiner(self, universe):
+        picks = [
+            Signal(symbol=sym, date=date(2023, 1, 2), signal_name="test", score=0.8)
+            for sym in universe
+        ]
+        return StubSignalCombiner(picks)
+
+    def test_cusum_gate_disabled_allows_entries(self, universe, prices, stub_combiner):
+        """With use_cusum_gate=False, entries happen as before (no CUSUM filter)."""
+        close_df, open_df = prices
+        config = EventEngineConfig(
+            initial_capital=100_000.0,
+            max_positions=20,
+            max_position_weight=0.10,
+            rebalance_frequency="monthly",
+            exit_config=ExitConfig(
+                profit_take_mult=100.0, stop_loss_mult=100.0, max_holding_days=999
+            ),
+            use_cusum_gate=False,
+            use_regime_multiplier=False,
+            use_meta_labeling=False,
+        )
+        engine = EventDrivenEngine(stub_combiner, config)
+        result = engine.run(universe, close_df, open_df)
+
+        # Without CUSUM gate, positions should be entered on rebalance day
+        assert not result.trade_log.empty or len(result.open_positions) > 0
+
+    def test_cusum_gate_enabled_engine_runs(self, universe, prices, stub_combiner):
+        """Engine with CUSUM gate enabled should run without error."""
+        close_df, open_df = prices
+        config = EventEngineConfig(
+            initial_capital=100_000.0,
+            max_positions=20,
+            max_position_weight=0.10,
+            rebalance_frequency="monthly",
+            exit_config=ExitConfig(
+                profit_take_mult=100.0, stop_loss_mult=100.0, max_holding_days=999
+            ),
+            use_cusum_gate=True,
+            cusum_recency_days=5,
+            use_regime_multiplier=False,
+            use_meta_labeling=False,
+        )
+        engine = EventDrivenEngine(stub_combiner, config)
+        result = engine.run(universe, close_df, open_df)
+
+        assert result.equity_curve is not None
+        assert len(result.equity_curve) == len(close_df)
+
+    def test_run_accepts_macro_and_sentiment_prices(
+        self, universe, prices, stub_combiner
+    ):
+        """run() should accept optional macro_prices and sentiment_prices kwargs."""
+        close_df, open_df = prices
+        config = EventEngineConfig(
+            use_cusum_gate=False, use_regime_multiplier=False, use_meta_labeling=False
+        )
+        engine = EventDrivenEngine(stub_combiner, config)
+
+        # Passing None explicitly should work fine
+        result = engine.run(
+            universe, close_df, open_df, macro_prices=None, sentiment_prices=None
+        )
+        assert result.equity_curve is not None
+
+    def test_regime_multiplier_reduces_position_size(self, universe):
+        """Passing stress macro data should produce smaller positions than no-regime."""
+        n = 260
+        dates = pd.bdate_range(start=date(2023, 1, 2), periods=n)
+        base_price = 100.0
+
+        rng = np.random.default_rng(0)
+        close_data = {
+            sym: base_price * np.cumprod(1 + rng.normal(0.0005, 0.015, n))
+            for sym in universe + ["SPY"]
+        }
+        open_data = {
+            sym: np.concatenate([[base_price], close_data[sym][:-1]])
+            for sym in universe + ["SPY"]
+        }
+        close_df = pd.DataFrame(close_data, index=dates)
+        open_df = pd.DataFrame(open_data, index=dates)
+
+        picks = [
+            Signal(symbol=s, date=date(2023, 1, 1), signal_name="t", score=0.8)
+            for s in universe
+        ]
+        combiner = StubSignalCombiner(picks)
+
+        # Stress macro: inverted curve + falling HYG + bear + high VIX
+        macro_df = pd.DataFrame(
+            {
+                "^TNX": 3.5,
+                "^IRX": 4.5,  # inverted: spread = -1.0
+                "HYG": np.linspace(80, 65, n),  # falling HYG/LQD ratio
+                "LQD": 110.0,
+            },
+            index=dates,
+        )
+        sentiment_df = pd.DataFrame(
+            {
+                "SPY": np.linspace(100, 80, n),  # trending below 200MA
+                "^VIX": 30.0,  # elevated
+            },
+            index=dates,
+        )
+
+        config_regime = EventEngineConfig(
+            initial_capital=100_000.0,
+            max_positions=20,
+            max_position_weight=0.10,
+            exit_config=ExitConfig(
+                profit_take_mult=100.0, stop_loss_mult=100.0, max_holding_days=999
+            ),
+            use_cusum_gate=False,
+            use_regime_multiplier=True,
+            use_meta_labeling=False,
+        )
+        config_baseline = EventEngineConfig(
+            initial_capital=100_000.0,
+            max_positions=20,
+            max_position_weight=0.10,
+            exit_config=ExitConfig(
+                profit_take_mult=100.0, stop_loss_mult=100.0, max_holding_days=999
+            ),
+            use_cusum_gate=False,
+            use_regime_multiplier=False,
+            use_meta_labeling=False,
+        )
+
+        engine_regime = EventDrivenEngine(combiner, config_regime)
+        engine_baseline = EventDrivenEngine(combiner, config_baseline)
+
+        result_regime = engine_regime.run(
+            universe, close_df, open_df, macro_df, sentiment_df
+        )
+        result_baseline = engine_baseline.run(universe, close_df, open_df)
+
+        if result_regime.trade_log.empty or result_baseline.trade_log.empty:
+            pytest.skip("No trades generated")
+
+        avg_shares_regime = result_regime.trade_log["shares"].mean()
+        avg_shares_baseline = result_baseline.trade_log["shares"].mean()
+
+        assert avg_shares_regime < avg_shares_baseline, (
+            "Stress regime should produce smaller positions than no-regime baseline. "
+            f"Regime avg: {avg_shares_regime:.2f}, Baseline avg: {avg_shares_baseline:.2f}"
+        )
+
+
+def test_meta_label_fallback_with_insufficient_data():
+    """With very high min_samples threshold, meta-label falls back silently."""
+    universe = ["AAPL", "MSFT", "GOOGL"]
+    close_df, open_df = _make_synthetic_prices(
+        universe + ["SPY"], n_days=260, start=date(2023, 1, 2), seed=7
+    )
+    picks = [
+        Signal(symbol=s, date=date(2023, 1, 2), signal_name="t", score=0.8)
+        for s in universe
+    ]
+    combiner = StubSignalCombiner(picks)
+
+    config = EventEngineConfig(
+        initial_capital=100_000.0,
+        max_positions=20,
+        max_position_weight=0.10,
+        exit_config=ExitConfig(
+            profit_take_mult=100.0, stop_loss_mult=100.0, max_holding_days=999
+        ),
+        use_cusum_gate=False,
+        use_regime_multiplier=False,
+        use_meta_labeling=True,
+        meta_label_min_samples=9999,  # impossible threshold → always fallback P=0.5
+    )
+    engine = EventDrivenEngine(combiner, config)
+    result = engine.run(universe, close_df, open_df)
+    assert result.equity_curve is not None

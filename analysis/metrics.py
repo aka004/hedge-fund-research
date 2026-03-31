@@ -35,6 +35,10 @@ class PerformanceMetrics:
     skewness: float
     kurtosis: float
 
+    # Optional extended fields (Phase 6 — backward compatible)
+    mcpt_p_value: float | None = None
+    information_ratio: float | None = None
+
 
 def calculate_metrics(
     returns: pd.Series,
@@ -382,3 +386,34 @@ def calculate_trade_metrics(trade_log: pd.DataFrame) -> TradeMetrics:
         max_adverse_avg=mae_avg,
         exit_breakdown=exit_breakdown,
     )
+
+
+def compute_information_ratio(
+    strategy_returns: pd.Series,
+    benchmark_returns: pd.Series,
+) -> float | None:
+    """Compute Information Ratio (IR = active_return / tracking_error).
+
+    IR = mean(strategy - benchmark) / std(strategy - benchmark) * sqrt(252)
+    Returns None if tracking error is 0 or insufficient data.
+
+    Args:
+        strategy_returns: Strategy return series
+        benchmark_returns: Benchmark return series
+
+    Returns:
+        Annualized information ratio or None
+    """
+    if len(strategy_returns) < 2 or len(benchmark_returns) < 2:
+        return None
+    # Align on common dates before computing active returns
+    strategy_aligned, benchmark_aligned = strategy_returns.align(
+        benchmark_returns, join="inner"
+    )
+    if len(strategy_aligned) < 2:
+        return None
+    active_returns = strategy_aligned - benchmark_aligned
+    tracking_error = active_returns.std()
+    if tracking_error == 0:
+        return None
+    return float(active_returns.mean() / tracking_error * np.sqrt(252))

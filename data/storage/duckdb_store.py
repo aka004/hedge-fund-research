@@ -36,17 +36,40 @@ class DuckDBStore:
         """Set up views for parquet files."""
         prices_dir = self.parquet_path / "prices"
         if prices_dir.exists() and list(prices_dir.glob("*.parquet")):
-            self._conn.execute(f"""
+            self._conn.execute(
+                f"""
                 CREATE OR REPLACE VIEW prices AS
                 SELECT * FROM read_parquet('{prices_dir}/*.parquet', filename=true)
-            """)
+            """
+            )
 
         fundamentals_dir = self.parquet_path / "fundamentals"
         if fundamentals_dir.exists() and list(fundamentals_dir.glob("*.parquet")):
-            self._conn.execute(f"""
+            self._conn.execute(
+                f"""
                 CREATE OR REPLACE VIEW fundamentals AS
                 SELECT * FROM read_parquet('{fundamentals_dir}/*.parquet', filename=true)
-            """)
+            """
+            )
+
+        self._setup_pm_events_view()
+
+    def _setup_pm_events_view(self) -> None:
+        """Create DuckDB view over prediction market event parquet files.
+
+        Looks for files matching parquet_path/pm_events_*.parquet.
+        Only creates view if at least one file exists.
+        View name: pm_events
+        """
+        pm_files = list(self.parquet_path.glob("pm_events_*.parquet"))
+        if not pm_files:
+            return
+
+        file_list = ", ".join(f"'{str(f)}'" for f in pm_files)
+        self._conn.execute(
+            f"CREATE OR REPLACE VIEW pm_events AS SELECT * FROM read_parquet([{file_list}])"
+        )
+        logger.debug("Created pm_events view over %d parquet file(s)", len(pm_files))
 
     def refresh_views(self) -> None:
         """Refresh DuckDB views after new data is added."""
@@ -205,6 +228,23 @@ class DuckDBStore:
                     results.append(df.iloc[0].to_dict())
 
         return pd.DataFrame(results) if results else pd.DataFrame()
+
+    def get_events_for_symbol(self, symbol: str) -> pd.DataFrame:
+        """Get all prediction market events for a symbol from the pm_events view.
+
+        Args:
+            symbol: Ticker symbol to filter on
+
+        Returns:
+            DataFrame of matching events, or empty DataFrame if view does not exist
+        """
+        try:
+            return self._conn.execute(
+                "SELECT * FROM pm_events WHERE symbol = ?", [symbol]
+            ).df()
+        except duckdb.CatalogException:
+            return pd.DataFrame()
+        # Let other exceptions (programming errors, corrupt files) propagate
 
     def close(self) -> None:
         """Close the DuckDB connection."""

@@ -173,6 +173,94 @@ def stationarity_check(
     return results_df, warnings
 
 
+@dataclass
+class RollingStationarityResult:
+    """Result of rolling stationarity diagnostic (STATN).
+
+    Attributes
+    ----------
+    rolling_pvalues : pd.Series
+        ADF p-value for each rolling window (index = window end position)
+    fraction_stationary : float
+        Fraction of windows passing ADF test (p < significance)
+    passes : bool
+        True if fraction_stationary >= threshold (e.g. 0.80)
+    recommendation : str
+        Plain-English interpretation
+    """
+
+    rolling_pvalues: pd.Series
+    fraction_stationary: float
+    passes: bool
+    recommendation: str
+
+
+def rolling_statn(
+    excess_returns: pd.Series,
+    window: int = 60,
+    significance: float = 0.05,
+    threshold_fraction: float = 0.80,
+) -> RollingStationarityResult:
+    """Rolling stationarity diagnostic (Masters STATN).
+
+    Runs ADF test on each rolling window of `window` observations.
+    Measures what fraction of windows are stationary.
+
+    Parameters
+    ----------
+    excess_returns : pd.Series
+        Series of excess returns (strategy return minus benchmark)
+    window : int
+        Rolling window size in observations (default 60)
+    significance : float
+        ADF significance level (default 0.05)
+    threshold_fraction : float
+        Minimum fraction of stationary windows to pass (default 0.80)
+
+    Returns
+    -------
+    RollingStationarityResult
+
+    Notes
+    -----
+    Calls existing adf_test() internally — no ADF logic duplication.
+    Requires at least window+1 observations.
+    """
+    if len(excess_returns) < window + 1:
+        raise ValueError(
+            f"Need at least {window + 1} observations, got {len(excess_returns)}"
+        )
+
+    pvalues = {}
+    for i in range(window, len(excess_returns)):
+        window_slice = excess_returns.iloc[i - window + 1 : i + 1]
+        result = adf_test(window_slice, significance=significance)
+        pvalues[i] = result.p_value
+
+    rolling_pvalues = pd.Series(pvalues)
+    fraction_stationary = float((rolling_pvalues < significance).mean())
+    passes = fraction_stationary >= threshold_fraction
+
+    if passes:
+        recommendation = (
+            f"Series is stationary in {fraction_stationary:.1%} of rolling windows "
+            f"(>= {threshold_fraction:.1%} threshold). Safe to use."
+        )
+    else:
+        recommendation = (
+            f"WARNING: Series is stationary in only {fraction_stationary:.1%} of "
+            f"rolling windows (< {threshold_fraction:.1%} threshold). "
+            "Non-stationarity detected — consider differencing."
+        )
+
+    return RollingStationarityResult(
+        rolling_pvalues=rolling_pvalues,
+        fraction_stationary=fraction_stationary,
+        passes=passes,
+        recommendation=recommendation,
+    )
+
+
 def transform_to_stationary(
     series: pd.Series,
     method: str = "diff",

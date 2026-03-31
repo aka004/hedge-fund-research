@@ -331,6 +331,128 @@ def save_event_report(
     return saved_files
 
 
+def generate_surprise_report(
+    result: "SurpriseBacktestResult",
+    mcpt_result: "McptResult | None" = None,
+    statn_result: "RollingStationarityResult | None" = None,
+    entropy_result: "EntropyDiagnosticResult | None" = None,
+) -> str:
+    """Generate a text report for Prediction Market Surprise Alpha backtest results.
+
+    Args:
+        result: SurpriseBacktestResult from EventBacktestEngine
+        mcpt_result: Optional MCPT permutation test result
+        statn_result: Optional rolling stationarity result
+        entropy_result: Optional entropy diagnostic result
+
+    Returns:
+        Formatted string report with event stats, performance, diagnostics, top trades
+    """
+    lines = [
+        "=== Prediction Market Surprise Alpha Backtest Report ===",
+        "",
+        "EVENT STATISTICS",
+    ]
+
+    n_total = result.n_events_total
+    n_traded = result.n_events_traded
+    n_filtered = result.n_events_filtered
+    filter_pct = (n_filtered / n_total * 100) if n_total > 0 else 0.0
+    lines += [
+        f"  Total events considered: {n_total}",
+        f"  Events traded: {n_traded}",
+        f"  Events filtered: {n_filtered} ({filter_pct:.1f}% filtered out)",
+        "",
+        "PERFORMANCE",
+    ]
+
+    tl = result.trade_log
+    if not tl.empty:
+        total_return = (
+            result.equity_curve["equity"].iloc[-1] / result.config.initial_capital - 1
+            if not result.equity_curve.empty
+            else 0.0
+        )
+        winners = tl[tl["pnl"] > 0]
+        losers = tl[tl["pnl"] < 0]
+        win_rate = len(winners) / len(tl) if len(tl) > 0 else 0.0
+        gross_wins = float(winners["pnl"].sum()) if not winners.empty else 0.0
+        gross_losses = abs(float(losers["pnl"].sum())) if not losers.empty else 0.0
+        profit_factor = gross_wins / gross_losses if gross_losses > 0 else float("inf")
+
+        dr = result.daily_returns.dropna()
+        sharpe = 0.0
+        if len(dr) > 1 and dr.std() > 0:
+            sharpe = float(dr.mean() / dr.std() * (252**0.5))
+
+        eq = result.equity_curve
+        max_dd = 0.0
+        if not eq.empty and "equity" in eq.columns:
+            cum = eq["equity"]
+            rolling_max = cum.expanding().max()
+            drawdowns = cum / rolling_max - 1
+            max_dd = float(drawdowns.min())
+
+        lines += [
+            f"  Total return: {total_return * 100:.1f}%",
+            f"  Sharpe ratio: {sharpe:.2f}",
+            f"  Max drawdown: {max_dd * 100:.1f}%",
+            f"  Win rate: {win_rate * 100:.1f}%",
+            f"  Profit factor: {profit_factor:.1f}",
+        ]
+    else:
+        lines += ["  No trades to report."]
+
+    lines.append("")
+
+    # Masters diagnostic results
+    has_diagnostics = any(
+        r is not None for r in [statn_result, mcpt_result, entropy_result]
+    )
+    if has_diagnostics:
+        lines.append("MASTERS DIAGNOSTIC RESULTS")
+        if statn_result is not None:
+            label = "PASS" if statn_result.passes else "FAIL"
+            fs = statn_result.fraction_stationary
+            lines.append(
+                f"  STATN (Stationarity):    {label} (fraction_stationary={fs:.2f})"
+            )
+        if mcpt_result is not None:
+            label = "PASS" if mcpt_result.passes else "FAIL"
+            pv = mcpt_result.p_value
+            np_ = mcpt_result.n_permutations
+            lines.append(
+                f"  MCPT (Permutation test): {label} (p_value={pv:.3f}, n_permutations={np_})"
+            )
+        if entropy_result is not None:
+            label = "PASS" if entropy_result.passes else "FAIL"
+            fbm = entropy_result.fraction_below_max
+            lines.append(
+                f"  ENTROPY:                 {label} (fraction_below_max={fbm:.2f})"
+            )
+        lines.append("")
+
+    # Top 10 trades by return_pct
+    if not tl.empty and "return_pct" in tl.columns:
+        lines.append("TOP 10 TRADES BY RETURN")
+        top10 = tl.nlargest(10, "return_pct")
+        for _, row in top10.iterrows():
+            symbol = row.get("symbol", "?")
+            entry_date = row.get("entry_date", "?")
+            exit_reason = row.get("exit_reason", "?")
+            ret_pct = row.get("return_pct", 0.0) or 0.0
+            surprise = row.get("surprise_score")
+            sign = "+" if ret_pct >= 0 else ""
+            surprise_str = (
+                f"  (surprise: {surprise:.2f} bits)" if surprise is not None else ""
+            )
+            lines.append(
+                f"  {symbol:<6} {entry_date}  {exit_reason:<14} {sign}{ret_pct * 100:.1f}%{surprise_str}"
+            )
+
+    return "\n".join(lines)
+
+
 def save_obsidian_report(
     result: BacktestResult,
     metrics: PerformanceMetrics,
