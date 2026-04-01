@@ -53,13 +53,48 @@ async function fetchMacroRegime() {
   return cachedRegime;
 }
 
+const RESOLUTION_LABELS = {
+  '1': '1min', '3': '3min', '5': '5min', '15': '15min', '30': '30min',
+  '45': '45min', '60': '1hr', '120': '2hr', '180': '3hr', '240': '4hr',
+  'D': 'Daily', '1D': 'Daily', 'W': 'Weekly', '1W': 'Weekly',
+  'M': 'Monthly', '1M': 'Monthly',
+};
+
 function buildSystemPrompt(chartState, ohlcv, indicators, macroContext) {
+  const resolution = chartState?.resolution || '60';
+  const tfLabel = RESOLUTION_LABELS[resolution] || resolution;
+
   let prompt = `You are a senior technical analyst and Pine Script developer with access to a live TradingView chart.
 
 `;
 
   if (chartState) {
-    prompt += `Current chart: ${chartState.symbol} | ${chartState.resolution}
+    prompt += `Current chart: ${chartState.symbol} | Timeframe: ${tfLabel}
+`;
+  }
+
+  // Timeframe-aware guidance
+  prompt += `
+TIMEFRAME CONTEXT (${tfLabel}):
+`;
+  const resNum = parseInt(resolution) || 1440;
+  if (resNum <= 15) {
+    prompt += `- This is an INTRADAY scalping timeframe. Focus on micro-structure levels.
+- Support/resistance should be very precise (within a few ticks).
+- Only identify 2-3 key levels near the current price, not historical extremes.
+- Levels should be spaced at least 0.1-0.3% apart.
+`;
+  } else if (resNum <= 240) {
+    prompt += `- This is an INTRADAY swing timeframe. Focus on session-level structure.
+- Identify levels from the current and recent sessions.
+- Levels should be meaningful (tested multiple times, high volume).
+- Keep to 3-5 key levels. Space them at least 0.5-1% apart.
+`;
+  } else {
+    prompt += `- This is a POSITIONAL/SWING timeframe. Focus on major structural levels.
+- Identify levels that have held over weeks/months.
+- These should be significant zones, not minor intraday noise.
+- Keep to 3-5 key levels. Space them at least 1-3% apart.
 `;
   }
 
@@ -67,14 +102,18 @@ function buildSystemPrompt(chartState, ohlcv, indicators, macroContext) {
     const bars = ohlcv.bars;
     const last = bars[bars.length - 1];
     const first = bars[0];
-    prompt += `Last ${bars.length} bars: O:${first.open} -> C:${last.close} | H:${Math.max(...bars.map(b => b.high)).toFixed(2)} L:${Math.min(...bars.map(b => b.low)).toFixed(2)}
+    const high = Math.max(...bars.map(b => b.high));
+    const low = Math.min(...bars.map(b => b.low));
+    const range = high - low;
+    prompt += `Price range: ${low.toFixed(2)} - ${high.toFixed(2)} (range: ${range.toFixed(2)})
+Current: O:${last.open} H:${last.high} L:${last.low} C:${last.close}
 `;
 
     // Include compact OHLCV for last 10 bars
     const recent = bars.slice(-10);
     prompt += `Recent bars (last 10):\n`;
     for (const b of recent) {
-      prompt += `  ${new Date(b.time * 1000).toISOString().slice(0, 10)} O:${b.open} H:${b.high} L:${b.low} C:${b.close} V:${b.volume}\n`;
+      prompt += `  ${new Date(b.time * 1000).toISOString().slice(0, 16)} O:${b.open} H:${b.high} L:${b.low} C:${b.close} V:${b.volume}\n`;
     }
   }
 
@@ -90,10 +129,17 @@ function buildSystemPrompt(chartState, ohlcv, indicators, macroContext) {
   }
 
   prompt += `
-When you want to draw on the chart, include a JSON block like:
+DRAWING RULES:
+- Only draw levels that are clearly visible and significant on the CURRENT timeframe.
+- Do NOT cluster lines — ensure each level is meaningfully separated from the others.
+- Use red (#ff3b30) for resistance, green (#00d26a) for support, amber (#ff8c00) for key pivots.
+- Maximum 5 drawings per response.
+- Label each line clearly (e.g., "Support $582", "Resistance $595").
+
+When you want to draw on the chart, include a JSON block:
 \`\`\`
 [DRAWINGS]
-[{"type":"hline","price":150.00,"color":"#ff3b30","label":"Resistance"}]
+[{"type":"hline","price":150.00,"color":"#ff3b30","label":"Resistance $150"}]
 [/DRAWINGS]
 \`\`\`
 
@@ -103,7 +149,7 @@ Drawing types:
 - label: {"type":"label","time":UNIX,"price":NUM,"text":"text","color":"#hex"}
 - box: {"type":"box","from":{"time":UNIX,"price":NUM},"to":{"time":UNIX,"price":NUM},"color":"#hex"}
 
-Keep analysis concise and trader-focused. Reference specific price levels and patterns.`;
+Keep analysis concise and trader-focused. Reference specific price levels.`;
 
   return prompt;
 }
