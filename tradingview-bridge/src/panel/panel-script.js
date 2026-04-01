@@ -76,8 +76,14 @@ export const PANEL_SCRIPT = `
     })
     .then(function(res) { return res.json(); })
     .then(function(data) {
-      var response = data.response || data.text || data.message || 'No response.';
-      var drawings = data.drawings_count || data.drawings || 0;
+      var response = data.text || data.response || data.message || 'No response.';
+      var drawings = data.drawings_executed || data.drawings_count || data.drawings || 0;
+
+      // Update regime badge if analyze response includes it
+      if (data.regime) {
+        tvaiUpdateRegimeBadge(data.regime);
+      }
+
       tvaiMessages.push({ role: 'ai', text: response, time: tvaiTimestamp(), drawings: drawings });
     })
     .catch(function(err) {
@@ -119,25 +125,32 @@ export const PANEL_SCRIPT = `
     }
   }
 
+  function tvaiUpdateRegimeBadge(regime) {
+    var regimeEl = document.getElementById('tvai-regime');
+    if (!regimeEl || !regime) return;
+    var r = regime.toUpperCase();
+    regimeEl.textContent = r;
+    regimeEl.style.display = '';
+    regimeEl.className = 'tvai-badge tvai-badge-regime';
+    if (r === 'HAWKISH') {
+      regimeEl.className += ' hawkish';
+    } else if (r === 'DOVISH') {
+      regimeEl.className += ' dovish';
+    } else {
+      regimeEl.className += ' mixed';
+    }
+  }
+
   function tvaiPollStatus() {
     fetch(tvaiBaseUrl + '/api/status')
       .then(function(res) { return res.json(); })
       .then(function(data) {
         var symbolEl = document.getElementById('tvai-symbol');
-        var regimeEl = document.getElementById('tvai-regime');
-        if (symbolEl && data.symbol) {
-          symbolEl.textContent = data.symbol;
+        if (symbolEl && data.chart && data.chart.symbol) {
+          symbolEl.textContent = data.chart.symbol;
         }
-        if (regimeEl && data.regime) {
-          regimeEl.textContent = data.regime.toUpperCase();
-          regimeEl.className = 'tvai-badge tvai-badge-regime';
-          if (data.regime.toLowerCase().indexOf('bear') !== -1) {
-            regimeEl.className += ' bearish';
-          } else if (data.regime.toLowerCase().indexOf('bull') !== -1) {
-            // default green style
-          } else {
-            regimeEl.className += ' neutral';
-          }
+        if (data.regime) {
+          tvaiUpdateRegimeBadge(data.regime);
         }
       })
       .catch(function() {
@@ -145,20 +158,21 @@ export const PANEL_SCRIPT = `
       });
   }
 
+  function tvaiTogglePanel() {
+    var container = document.getElementById('tv-ai-panel-container');
+    if (!container) return;
+    if (container.classList.contains('tvai-expanded')) {
+      container.classList.remove('tvai-expanded');
+      container.classList.add('tvai-collapsed');
+    } else {
+      container.classList.remove('tvai-collapsed');
+      container.classList.add('tvai-expanded');
+    }
+  }
+
   function tvaiClosePanel() {
     var panel = document.getElementById('tv-ai-panel-container');
     if (panel) panel.remove();
-  }
-
-  // Initialize input handler
-  var tvaiInput = document.getElementById('tvai-input');
-  if (tvaiInput) {
-    tvaiInput.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        tvaiSend();
-      }
-    });
   }
 
   // Initial render

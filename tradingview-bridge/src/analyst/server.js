@@ -30,6 +30,29 @@ const anthropic = new Anthropic();
 
 let conversationHistory = [];
 
+// Cached macro regime — refreshed at most every 60 seconds
+let cachedRegime = null;
+let regimeFetchedAt = 0;
+const REGIME_CACHE_TTL_MS = 60_000;
+
+async function fetchMacroRegime() {
+  const now = Date.now();
+  if (cachedRegime !== null && (now - regimeFetchedAt) < REGIME_CACHE_TTL_MS) {
+    return cachedRegime;
+  }
+  try {
+    const resp = await fetch('http://localhost:8000/api/macro/indicators');
+    if (resp.ok) {
+      const data = await resp.json();
+      cachedRegime = data.regime || null;
+      regimeFetchedAt = now;
+    }
+  } catch {
+    // Macro service unavailable — keep stale cache or null
+  }
+  return cachedRegime;
+}
+
 function buildSystemPrompt(chartState, ohlcv, indicators, macroContext) {
   let prompt = `You are a senior technical analyst and Pine Script developer with access to a live TradingView chart.
 
@@ -171,11 +194,13 @@ app.post('/api/analyze', async (req, res) => {
       }
     }
 
-    // 8. Return clean text
+    // 8. Return clean text with regime
+    const regime = macroContext?.regime || cachedRegime || null;
     res.json({
       text: cleanResponseText(assistantText),
       drawings_executed: drawings.length,
-      chart: chartState
+      chart: chartState,
+      regime
     });
   } catch (e) {
     console.error('Analyze error:', e);
@@ -193,8 +218,15 @@ app.post('/api/clear-drawings', async (req, res) => {
 });
 
 app.get('/api/status', async (req, res) => {
-  const state = await getChartState().catch(() => null);
-  res.json({ connected: !!state, chart: state });
+  const [state, regime] = await Promise.all([
+    getChartState().catch(() => null),
+    fetchMacroRegime()
+  ]);
+  res.json({
+    connected: !!state,
+    chart: state,
+    regime: regime || null
+  });
 });
 
 app.post('/api/reset', (req, res) => {
