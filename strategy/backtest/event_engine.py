@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from afml.regime_composite import compute_regime_multiplier
 from strategy.backtest.exit_manager import ExitConfig, ExitManager, ExitSignal
 from strategy.backtest.portfolio import RoundTripTrade, TransactionCosts
 from strategy.signals.combiner import SignalCombiner
@@ -25,6 +26,12 @@ class EventEngineConfig:
     transaction_costs: TransactionCosts = field(default_factory=TransactionCosts)
     exit_config: ExitConfig = field(default_factory=ExitConfig)
     benchmark_symbol: str = "SPY"
+    # Phase 2: CUSUM / regime / meta-label controls
+    cusum_recency_days: int = 5  # days to look back for recent upside CUSUM fire
+    meta_label_min_samples: int = 50  # min CUSUM events before meta-label activates
+    use_cusum_gate: bool = True  # enable CUSUM entry gate
+    use_regime_multiplier: bool = True  # enable 3-layer regime multiplier
+    use_meta_labeling: bool = True  # enable rolling meta-label sizing
 
 
 @dataclass
@@ -58,6 +65,8 @@ class EventDrivenEngine:
         universe: list[str],
         close_prices: pd.DataFrame,
         open_prices: pd.DataFrame,
+        macro_prices: pd.DataFrame | None = None,
+        sentiment_prices: pd.DataFrame | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
     ) -> EventEngineResult:
@@ -85,6 +94,34 @@ class EventDrivenEngine:
 
         # Compute rebalance dates
         rebalance_dates = self._get_rebalance_dates(trading_days)
+
+        # Pre-compute CUSUM event sets for all symbols (once at startup)
+        if self.config.use_cusum_gate:
+            cusum_upside_dates, cusum_downside_dates = self._precompute_cusum(
+                close_prices
+            )
+        else:
+            cusum_upside_dates = {}
+            cusum_downside_dates = {}
+
+        # Prepare macro/sentiment series dicts for regime computation
+        macro_series: dict[str, pd.Series] = {}
+        sentiment_series: dict[str, pd.Series] = {}
+        if macro_prices is not None and self.config.use_regime_multiplier:
+            macro_norm = self._normalize_index(macro_prices)
+            for col in macro_norm.columns:
+                s = macro_norm[col].dropna()
+                s.index = pd.to_datetime(s.index)
+                macro_series[col] = s
+        if sentiment_prices is not None and self.config.use_regime_multiplier:
+            sentiment_norm = self._normalize_index(sentiment_prices)
+            for col in sentiment_norm.columns:
+                s = sentiment_norm[col].dropna()
+                s.index = pd.to_datetime(s.index)
+                sentiment_series[col] = s
+
+        # Meta-label state (retrained at each rebalance)
+        meta_label_clf = None
 
         # State
         cash = self.config.initial_capital
@@ -135,6 +172,37 @@ class EventDrivenEngine:
 
             # --- Step B: If rebalance day, enter new positions at today's OPEN ---
             if today in rebalance_dates:
+                # Compute which symbols had upside CUSUM fire within recency window
+                if self.config.use_cusum_gate:
+                    recency_cutoff = today - timedelta(
+                        days=self.config.cusum_recency_days
+                    )
+                    upside_cusum = {
+                        sym
+                        for sym, dates in cusum_upside_dates.items()
+                        if any(recency_cutoff <= d <= today for d in dates)
+                    }
+                else:
+                    upside_cusum = set(close_prices.columns)  # allow all
+
+                # Compute regime multiplier for today
+                if (
+                    self.config.use_regime_multiplier
+                    and macro_series
+                    and sentiment_series
+                ):
+                    regime_state = compute_regime_multiplier(
+                        macro_series, sentiment_series, today
+                    )
+                    regime_mult = regime_state.multiplier
+                else:
+                    regime_mult = 1.0
+
+                # Retrain meta-label model at each rebalance
+                if self.config.use_meta_labeling:
+                    yesterday = today - timedelta(days=1)
+                    meta_label_clf = self._train_meta_label(close_prices, yesterday)
+
                 cash, positions, completed_trades = self._handle_rebalance(
                     today=today,
                     universe=universe,
@@ -142,6 +210,10 @@ class EventDrivenEngine:
                     cash=cash,
                     positions=positions,
                     completed_trades=completed_trades,
+                    upside_cusum=upside_cusum,
+                    regime_mult=regime_mult,
+                    meta_label_clf=meta_label_clf,
+                    close_prices=close_prices,
                 )
 
             # --- Step C: Mark-to-market at today's CLOSE ---
@@ -154,8 +226,17 @@ class EventDrivenEngine:
                     trade.max_adverse = min(trade.max_adverse, current_return)
 
             # --- Step D: Check exit barriers at today's CLOSE ---
+            today_downside = cusum_downside_dates.get("_today_fires_", set())
+            if self.config.use_cusum_gate and cusum_downside_dates:
+                today_downside = {
+                    sym for sym, dates in cusum_downside_dates.items() if today in dates
+                }
             new_exits = self.exit_manager.check_exits(
-                positions, today, today_close, today_vol
+                positions,
+                today,
+                today_close,
+                today_vol,
+                cusum_downside=today_downside,
             )
             pending_exits.extend(new_exits)
 
@@ -197,6 +278,10 @@ class EventDrivenEngine:
         cash: float,
         positions: dict[str, RoundTripTrade],
         completed_trades: list[RoundTripTrade],
+        upside_cusum: set[str] | None = None,
+        regime_mult: float = 1.0,
+        meta_label_clf=None,
+        close_prices: pd.DataFrame | None = None,
     ) -> tuple[float, dict[str, RoundTripTrade], list[RoundTripTrade]]:
         """Process rebalance: exit stale, enter new. Returns (cash, positions, completed)."""
         # Generate signals using data through YESTERDAY (no look-ahead)
@@ -247,10 +332,23 @@ class EventDrivenEngine:
                 continue
             if len(positions) >= self.config.max_positions:
                 break
+            # CUSUM entry gate: skip if no recent upside fire
+            if self.config.use_cusum_gate and upside_cusum is not None:
+                if symbol not in upside_cusum:
+                    continue
 
-            # Cap at max_position_weight
+            # Meta-label P(win) — scales position size
+            meta_prob = (
+                self._get_meta_label_prob(meta_label_clf, close_prices, symbol, today)
+                if self.config.use_meta_labeling and close_prices is not None
+                else 0.5
+            )
+
+            # Cap at max_position_weight, then apply regime_mult and meta_prob
             capped_weight = min(weight, self.config.max_position_weight)
-            target_value = capped_weight * current_equity
+            target_value = (
+                capped_weight * current_equity * regime_mult * (meta_prob * 2)
+            )
             price = today_open[symbol]
 
             if price <= 0:
@@ -285,6 +383,209 @@ class EventDrivenEngine:
             )
 
         return cash, positions, completed_trades
+
+    def _precompute_cusum(
+        self,
+        close_prices: pd.DataFrame,
+    ) -> tuple[dict[str, set], dict[str, set]]:
+        """Pre-compute CUSUM upside and downside fire dates for all symbols.
+
+        Returns
+        -------
+        upside_dates : dict[str, set[date]]
+            Per-symbol set of dates where upside CUSUM fired.
+        downside_dates : dict[str, set[date]]
+            Per-symbol set of dates where downside CUSUM fired.
+        """
+        from afml.cusum import cusum_filter
+
+        upside_dates: dict[str, set] = {}
+        downside_dates: dict[str, set] = {}
+
+        for symbol in close_prices.columns:
+            col = close_prices[symbol].dropna()
+            if len(col) < 30:
+                upside_dates[symbol] = set()
+                downside_dates[symbol] = set()
+                continue
+
+            try:
+                result = cusum_filter(col)
+            except Exception:
+                upside_dates[symbol] = set()
+                downside_dates[symbol] = set()
+                continue
+
+            # Upside fires: cusum_positive drops to 0 from a positive value (reset on event)
+            pos = result.cusum_positive
+            upside_resets = pos[(pos == 0.0) & (pos.shift(1) > 0)]
+            upside_dates[symbol] = {
+                pd.Timestamp(ts).date() for ts in upside_resets.index
+            }
+
+            # Downside fires: cusum_negative rises to 0 from a negative value
+            neg = result.cusum_negative
+            downside_resets = neg[(neg == 0.0) & (neg.shift(1) < 0)]
+            downside_dates[symbol] = {
+                pd.Timestamp(ts).date() for ts in downside_resets.index
+            }
+
+        return upside_dates, downside_dates
+
+    def _build_meta_label_features(
+        self,
+        close_prices: pd.DataFrame,
+        as_of: date,
+    ):
+        """Build features and labels from CUSUM events up to as_of.
+
+        Returns (X, y, label_end_times) DataFrame/Series or None if insufficient.
+        Features: trailing_return_20d, trailing_vol_20d, cusum_days_since_fire.
+        Labels: triple_barrier outcome (1=win, 0=loss/timeout).
+        """
+        from afml.cusum import cusum_filter
+        from afml.labels import triple_barrier
+
+        all_x, all_y, all_ends = [], [], []
+
+        for symbol in close_prices.columns:
+            col = close_prices[symbol].dropna()
+            col_ts = col.copy()
+            col_ts.index = pd.to_datetime(col_ts.index)
+            col_asof = col_ts[col_ts.index <= pd.Timestamp(as_of)]
+            if len(col_asof) < 60:
+                continue
+
+            try:
+                cusum_result = cusum_filter(col_asof)
+            except Exception:
+                continue
+
+            if len(cusum_result.events) < 5:
+                continue
+
+            try:
+                tb = triple_barrier(
+                    col_asof,
+                    events=cusum_result.events,
+                    profit_take=self.config.exit_config.profit_take_mult,
+                    stop_loss=self.config.exit_config.stop_loss_mult,
+                    max_holding=self.config.exit_config.max_holding_days,
+                )
+            except Exception:
+                continue
+
+            for event_time in cusum_result.events:
+                if event_time not in col_asof.index:
+                    continue
+                if event_time not in tb.labels.index:
+                    continue
+
+                idx = col_asof.index.get_loc(event_time)
+                if idx < 20:
+                    continue
+
+                window = col_asof.iloc[max(0, idx - 20) : idx + 1]
+                ret_20d = float((window.iloc[-1] / window.iloc[0]) - 1)
+                vol_20d = float(window.pct_change().std())
+
+                prior_events = cusum_result.events[cusum_result.events < event_time]
+                days_since = (
+                    (event_time - prior_events[-1]).days
+                    if len(prior_events) > 0
+                    else 999
+                )
+
+                label = 1 if tb.labels.loc[event_time] == 1 else 0
+                exit_time = tb.exit_times.loc[event_time]
+
+                all_x.append(
+                    {
+                        "trailing_return_20d": ret_20d,
+                        "trailing_vol_20d": vol_20d,
+                        "cusum_days_since_fire": min(days_since, 999),
+                    }
+                )
+                all_y.append(label)
+                all_ends.append(exit_time)
+
+        if len(all_x) < self.config.meta_label_min_samples:
+            return None
+
+        return pd.DataFrame(all_x), pd.Series(all_y), pd.Series(all_ends)
+
+    def _train_meta_label(self, close_prices: pd.DataFrame, as_of: date):
+        """Train RF meta-label model. Returns fitted model or None if insufficient data."""
+        from sklearn.ensemble import RandomForestClassifier
+
+        data = self._build_meta_label_features(close_prices, as_of)
+        if data is None:
+            return None
+
+        X, y, _ = data
+        if y.nunique() < 2:
+            return None  # cannot train on single class
+
+        X = X.reset_index(drop=True)
+        y = y.reset_index(drop=True)
+
+        clf = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+        try:
+            clf.fit(X, y)
+        except Exception:
+            return None
+        return clf
+
+    def _get_meta_label_prob(
+        self,
+        clf,
+        close_prices: pd.DataFrame,
+        symbol: str,
+        as_of: date,
+    ) -> float:
+        """Get P(win) for a symbol. Returns 0.5 (neutral) if model unavailable."""
+        if clf is None:
+            return 0.5
+
+        if symbol not in close_prices.columns:
+            return 0.5
+
+        col = close_prices[symbol].dropna()
+        col_ts = col.copy()
+        col_ts.index = pd.to_datetime(col_ts.index)
+        col_asof = col_ts[col_ts.index <= pd.Timestamp(as_of)]
+        if len(col_asof) < 21:
+            return 0.5
+
+        from afml.cusum import cusum_filter
+
+        try:
+            cusum_result = cusum_filter(col_asof)
+        except Exception:
+            return 0.5
+
+        idx = len(col_asof) - 1
+        window = col_asof.iloc[max(0, idx - 20) : idx + 1]
+        ret_20d = float((window.iloc[-1] / window.iloc[0]) - 1)
+        vol_20d = float(window.pct_change().std())
+
+        prior = cusum_result.events[cusum_result.events <= pd.Timestamp(as_of)]
+        days_since = (pd.Timestamp(as_of) - prior[-1]).days if len(prior) > 0 else 999
+
+        X = pd.DataFrame(
+            [
+                {
+                    "trailing_return_20d": ret_20d,
+                    "trailing_vol_20d": vol_20d,
+                    "cusum_days_since_fire": min(days_since, 999),
+                }
+            ]
+        )
+        try:
+            prob = float(clf.predict_proba(X)[0][1])
+        except Exception:
+            return 0.5
+        return prob
 
     def _calculate_weights(
         self,

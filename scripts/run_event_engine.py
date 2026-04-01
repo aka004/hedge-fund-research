@@ -43,6 +43,51 @@ logger = logging.getLogger(__name__)
 
 PARQUET_DIR = STORAGE_PATH / "parquet"
 
+MACRO_TICKERS = ["^TNX", "^IRX", "HYG", "LQD"]
+SENTIMENT_TICKERS = ["^VIX"]  # SPY is added automatically
+
+
+def load_macro_dataframes(
+    start_date: date,
+    end_date: date,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load macro and sentiment tickers via yfinance for regime computation.
+
+    Macro:     ^TNX (10Y yield), ^IRX (3M yield), HYG, LQD
+    Sentiment: SPY (for 200MA), ^VIX
+    """
+    import yfinance as yf
+
+    def _fetch(tickers: list[str]) -> pd.DataFrame:
+        frames = {}
+        for ticker in tickers:
+            try:
+                df = yf.download(
+                    ticker,
+                    start=start_date.isoformat(),
+                    end=end_date.isoformat(),
+                    auto_adjust=True,
+                    progress=False,
+                )
+                if df.empty:
+                    logger.warning(f"No data for macro ticker {ticker}")
+                    continue
+                # Handle MultiIndex columns from yfinance
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                col = "Close" if "Close" in df.columns else df.columns[0]
+                frames[ticker] = df[col]
+            except Exception as e:
+                logger.warning(f"Failed to fetch {ticker}: {e}")
+        return pd.DataFrame(frames)
+
+    macro_df = _fetch(MACRO_TICKERS)
+    sentiment_df = _fetch(SENTIMENT_TICKERS + ["SPY"])
+
+    logger.info(f"Loaded macro tickers: {list(macro_df.columns)}")
+    logger.info(f"Loaded sentiment tickers: {list(sentiment_df.columns)}")
+    return macro_df, sentiment_df
+
 
 def load_price_dataframes(
     symbols: list[str], price_col: str = "adj_close"
@@ -248,10 +293,22 @@ def main():
         benchmark_symbol="SPY",
     )
 
+    # Load macro/sentiment data for 3-layer regime multiplier
+    logger.info("Loading macro/sentiment data for regime computation...")
+    macro_prices, sentiment_prices = load_macro_dataframes(start, end)
+
     # Run engine
     logger.info("Running EventDrivenEngine...")
     engine = EventDrivenEngine(combiner, config)
-    result = engine.run(universe, close_prices, open_prices, start, end)
+    result = engine.run(
+        universe,
+        close_prices,
+        open_prices,
+        macro_prices=macro_prices if not macro_prices.empty else None,
+        sentiment_prices=sentiment_prices if not sentiment_prices.empty else None,
+        start_date=start,
+        end_date=end,
+    )
 
     # Calculate metrics
     metrics = calculate_metrics(
@@ -272,6 +329,26 @@ def main():
     logger.info(f"Profit Factor: {metrics.profit_factor:.2f}")
     logger.info(f"Avg Holding:   {getattr(metrics, 'avg_holding_days', 'N/A')}")
     logger.info("=" * 50)
+
+    # PSR post-hoc validation (AFML Ch.14)
+    from afml.metrics import deflated_sharpe
+
+    if len(result.daily_returns) >= 252:
+        psr_result = deflated_sharpe(
+            result.daily_returns.values,
+            n_strategies_tested=1,
+        )
+        verdict = "PASS ✓" if psr_result.passes_threshold else "FAIL — do not promote"
+        logger.info(f"PSR: {psr_result.psr:.3f}  [{verdict}]")
+        if not psr_result.passes_threshold:
+            logger.warning(
+                f"Strategy PSR {psr_result.psr:.3f} < 0.95. "
+                "Insufficient statistical confidence. Do not promote to production."
+            )
+    else:
+        logger.warning(
+            f"Insufficient history for PSR ({len(result.daily_returns)} days < 252 required)"
+        )
 
     # Persist to DuckDB
     run_id = persist_results(result, metrics, universe, args.start, args.end)

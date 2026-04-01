@@ -30,9 +30,10 @@ from .diagnostics import (
 )
 from .labels import TripleBarrierLabels, triple_barrier
 from .meta_labeling import MetaLabelResult, meta_label_fit, meta_label_predict
-from .metrics import deflated_sharpe, psr
+from .metrics import deflated_sharpe, expected_max_sharpe, psr
 from .portfolio import hierarchical_risk_parity, hrp
 from .regime import Regime, RegimeSignal, regime_200ma
+from .regime_composite import RegimeState, compute_regime_multiplier
 from .weights import sample_uniqueness
 
 __all__ = [
@@ -63,6 +64,7 @@ __all__ = [
     "MetaLabelResult",
     # Metrics (Ch 14)
     "deflated_sharpe",
+    "expected_max_sharpe",
     "psr",
     # Portfolio (Ch 16)
     "hrp",
@@ -71,6 +73,9 @@ __all__ = [
     "regime_200ma",
     "RegimeSignal",
     "Regime",
+    # Regime Composite (Phase 2)
+    "compute_regime_multiplier",
+    "RegimeState",
     # Checks
     "stationarity_check",
     "AdfResult",

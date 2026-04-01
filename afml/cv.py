@@ -132,6 +132,7 @@ def purged_kfold(
     n_splits: int = 5,
     embargo_pct: float = 0.01,
     labels_end_times: pd.Series = None,
+    bidirectional: bool = True,
 ) -> Generator[tuple[np.ndarray, np.ndarray], None, None]:
     """
     Convenience function for purged k-fold cross-validation.
@@ -148,6 +149,10 @@ def purged_kfold(
         Fraction to embargo after test (default 0.01)
     labels_end_times : pd.Series
         End times of labels for purging
+    bidirectional : bool
+        If True (default), purge both forward and backward from each event.
+        Bidirectional purging is required for financial time series to avoid
+        look-ahead leakage from overlapping label windows.
 
     Yields
     ------
@@ -160,5 +165,7 @@ def purged_kfold(
     ...     model.fit(X_train, y.iloc[train_idx])
     ...     score = model.score(X_test, y.iloc[test_idx])
     """
-    cv = PurgedKFold(n_splits=n_splits, embargo_pct=embargo_pct)
+    cv = PurgedKFold(
+        n_splits=n_splits, embargo_pct=embargo_pct, bidirectional=bidirectional
+    )
     yield from cv.split(X, y, labels_end_times)
