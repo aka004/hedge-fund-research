@@ -1,0 +1,19 @@
+{
+  "name": "tradingview-bridge",
+  "version": "1.0.0",
+  "description": "TradingView AI Bridge - MCP server connecting Claude to TradingView Desktop via CDP",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "launch-tv": "bash scripts/launch-tv.sh"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "chrome-remote-interface": "^0.33.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.0",
+    "express": "^4.18.0"
+  }
+}
