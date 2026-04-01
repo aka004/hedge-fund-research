@@ -98,6 +98,10 @@ export async function getConnectionStatus() {
   }
 }
 
+export async function getClient() {
+  return connect();
+}
+
 export async function disconnect() {
   if (client) {
     await client.close();

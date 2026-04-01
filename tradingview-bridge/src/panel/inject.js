@@ -1,6 +1,9 @@
-import { evaluate } from '../cdp/connection.js';
+import { evaluate, getClient } from '../cdp/connection.js';
 import { PANEL_STYLES } from './panel-styles.js';
 import { PANEL_SCRIPT } from './panel-script.js';
+
+const ANALYST_BASE = process.env.ANALYST_URL || 'http://localhost:3456';
+let messageListenerActive = false;
 
 const PANEL_MARKUP = `
 <div id="tvai-collapse-tab" title="Toggle AI Panel">AI</div>
@@ -72,8 +75,11 @@ export async function injectPanel() {
     document.body.appendChild(container);
   })()`);
 
-  // Step 4: Inject script directly via evaluate (avoids escaping issues with script elements)
+  // Step 4: Inject script directly via evaluate
   await evaluate(PANEL_SCRIPT);
+
+  // Step 4.5: Start message relay (bridges panel postMessage to analyst server)
+  await startMessageRelay();
 
   // Step 5: Wire up event listeners via CDP
   await evaluate(`(function() {
@@ -134,4 +140,88 @@ export async function togglePanel() {
     await injectPanel();
   }
   return !injected;
+}
+
+/**
+ * Message relay: listens for postMessage from the injected panel,
+ * proxies requests to the analyst server (Node.js side), and sends
+ * responses back via CDP evaluate. This bypasses the HTTPS->HTTP
+ * mixed content restriction in the TradingView page.
+ */
+async function startMessageRelay() {
+  if (messageListenerActive) return;
+  messageListenerActive = true;
+
+  const c = await getClient();
+
+  // Add a binding so the page can call us
+  try {
+    await c.Runtime.addBinding({ name: '_tvaiRelay' });
+  } catch {
+    // binding may already exist
+  }
+
+  // Inject a listener in the page that forwards postMessage to the binding
+  await evaluate(`(function() {
+    window.addEventListener('message', function(e) {
+      if (e.data && e.data.source === 'tvai-panel') {
+        window._tvaiRelay(JSON.stringify(e.data));
+      }
+    });
+  })()`);
+
+  // Listen for binding calls on the Node.js side
+  c.Runtime.on('bindingCalled', async (event) => {
+    if (event.name !== '_tvaiRelay') return;
+
+    let msg;
+    try {
+      msg = JSON.parse(event.payload);
+    } catch {
+      return;
+    }
+
+    const { id, type, payload } = msg;
+    let result = null;
+    let error = null;
+
+    try {
+      if (type === 'analyze') {
+        const resp = await fetch(`${ANALYST_BASE}/api/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        result = await resp.json();
+      } else if (type === 'clear') {
+        const resp = await fetch(`${ANALYST_BASE}/api/clear-drawings`, {
+          method: 'POST',
+        });
+        result = await resp.json();
+      } else if (type === 'status') {
+        const resp = await fetch(`${ANALYST_BASE}/api/status`);
+        result = await resp.json();
+      } else {
+        error = 'Unknown request type: ' + type;
+      }
+    } catch (e) {
+      error = e.message;
+    }
+
+    // Send response back to the page
+    const responseData = JSON.stringify({
+      source: 'tvai-bridge',
+      id,
+      result,
+      error,
+    });
+
+    try {
+      await evaluate(
+        `window.postMessage(${responseData}, '*')`
+      );
+    } catch (e) {
+      console.error('Failed to send response to panel:', e);
+    }
+  });
 }

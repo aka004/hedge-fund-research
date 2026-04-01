@@ -1,7 +1,8 @@
 export const PANEL_SCRIPT = `
   var tvaiMessages = [];
   var tvaiLoading = false;
-  var tvaiBaseUrl = 'http://localhost:3456';
+  var tvaiPendingCallbacks = {};
+  var tvaiCallId = 0;
 
   function tvaiTimestamp() {
     var d = new Date();
@@ -55,6 +56,37 @@ export const PANEL_SCRIPT = `
     tvaiScrollToBottom();
   }
 
+  // Communication with bridge via postMessage
+  function tvaiRequest(type, payload) {
+    return new Promise(function(resolve, reject) {
+      var id = ++tvaiCallId;
+      tvaiPendingCallbacks[id] = { resolve: resolve, reject: reject };
+      window.postMessage({ source: 'tvai-panel', id: id, type: type, payload: payload }, '*');
+      // Timeout after 60s
+      setTimeout(function() {
+        if (tvaiPendingCallbacks[id]) {
+          tvaiPendingCallbacks[id].reject(new Error('Request timeout'));
+          delete tvaiPendingCallbacks[id];
+        }
+      }, 60000);
+    });
+  }
+
+  // Listen for responses from bridge
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.source === 'tvai-bridge') {
+      var cb = tvaiPendingCallbacks[e.data.id];
+      if (cb) {
+        delete tvaiPendingCallbacks[e.data.id];
+        if (e.data.error) {
+          cb.reject(new Error(e.data.error));
+        } else {
+          cb.resolve(e.data.result);
+        }
+      }
+    }
+  });
+
   function tvaiSend() {
     var input = document.getElementById('tvai-input');
     if (!input) return;
@@ -69,17 +101,11 @@ export const PANEL_SCRIPT = `
     var sendBtn = document.getElementById('tvai-send-btn');
     if (sendBtn) sendBtn.disabled = true;
 
-    fetch(tvaiBaseUrl + '/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text })
-    })
-    .then(function(res) { return res.json(); })
+    tvaiRequest('analyze', { message: text })
     .then(function(data) {
       var response = data.text || data.response || data.message || 'No response.';
-      var drawings = data.drawings_executed || data.drawings_count || data.drawings || 0;
+      var drawings = data.drawings_executed || 0;
 
-      // Update regime badge if analyze response includes it
       if (data.regime) {
         tvaiUpdateRegimeBadge(data.regime);
       }
@@ -101,7 +127,7 @@ export const PANEL_SCRIPT = `
     if (!input) return;
 
     if (type === 'clear') {
-      fetch(tvaiBaseUrl + '/api/clear-drawings', { method: 'POST' })
+      tvaiRequest('clear', {})
         .then(function() {
           tvaiMessages.push({ role: 'ai', text: 'Drawings cleared.', time: tvaiTimestamp(), drawings: 0 });
           tvaiRenderMessages();
@@ -115,7 +141,7 @@ export const PANEL_SCRIPT = `
 
     var prompts = {
       analyze: 'Analyze the current chart. Identify the trend, key patterns, and notable levels.',
-      levels: 'Identify the key support and resistance levels on this chart.',
+      levels: 'Identify the key support and resistance levels on this chart. Draw horizontal lines at those levels.',
       script: 'Help me write a Pine Script indicator for this chart.'
     };
 
@@ -142,8 +168,7 @@ export const PANEL_SCRIPT = `
   }
 
   function tvaiPollStatus() {
-    fetch(tvaiBaseUrl + '/api/status')
-      .then(function(res) { return res.json(); })
+    tvaiRequest('status', {})
       .then(function(data) {
         var symbolEl = document.getElementById('tvai-symbol');
         if (symbolEl && data.chart && data.chart.symbol) {
@@ -153,9 +178,7 @@ export const PANEL_SCRIPT = `
           tvaiUpdateRegimeBadge(data.regime);
         }
       })
-      .catch(function() {
-        // silent fail on status poll
-      });
+      .catch(function() {});
   }
 
   function tvaiTogglePanel() {
