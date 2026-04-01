@@ -2,7 +2,7 @@
 FastAPI backend for Stock Screener.
 """
 
-from app.api import dashboard, screener, stock
+from app.api import dashboard, macro, screener, stock
 from app.models.schemas import HealthResponse
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +16,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite default port
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,6 +26,7 @@ app.add_middleware(
 app.include_router(screener.router)
 app.include_router(stock.router)
 app.include_router(dashboard.router)
+app.include_router(macro.router)
 
 
 @app.get("/")
