@@ -12,7 +12,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import {
   getChartState,
   getOhlcv,
-  getIndicators
+  getIndicators,
+  getIndicatorValues,
+  getIndicatorGraphics
 } from '../cdp/chart-reader.js';
 import {
   drawHorizontalLine,
@@ -60,7 +62,7 @@ const RESOLUTION_LABELS = {
   'M': 'Monthly', '1M': 'Monthly',
 };
 
-function buildSystemPrompt(chartState, ohlcv, indicators, macroContext) {
+function buildSystemPrompt(chartState, ohlcv, indicators, macroContext, indicatorValues, indicatorGraphics) {
   const resolution = chartState?.resolution || '60';
   const tfLabel = RESOLUTION_LABELS[resolution] || resolution;
 
@@ -120,6 +122,44 @@ Current: O:${last.open} H:${last.high} L:${last.low} C:${last.close}
   if (indicators && indicators.length > 0) {
     prompt += `Active indicators: ${indicators.map(i => i.name).join(', ')}
 `;
+  }
+
+  // Indicator current values (from Data Window)
+  if (indicatorValues && indicatorValues.length > 0) {
+    prompt += `\nINDICATOR VALUES (current bar):\n`;
+    for (const ind of indicatorValues) {
+      prompt += `  ${ind.name}:\n`;
+      for (const v of ind.values.slice(0, 10)) {
+        prompt += `    ${v.title}: ${v.value}\n`;
+      }
+    }
+  }
+
+  // Indicator graphics (lines, labels, boxes drawn by Pine Script indicators)
+  if (indicatorGraphics && indicatorGraphics.length > 0) {
+    prompt += `\nINDICATOR GRAPHICS (drawn by active indicators):\n`;
+    for (const g of indicatorGraphics) {
+      prompt += `  ${g.name}:\n`;
+      if (g.lines.length > 0) {
+        prompt += `    Lines (${g.lines.length}): `;
+        const sample = g.lines.slice(-5);
+        prompt += sample.map(l => `y1:${l.y1?.toFixed?.(2) || l.y1} y2:${l.y2?.toFixed?.(2) || l.y2}`).join(', ');
+        prompt += '\n';
+      }
+      if (g.labels.length > 0) {
+        prompt += `    Labels (${g.labels.length}): `;
+        const sample = g.labels.slice(-8);
+        prompt += sample.map(l => `"${l.text}" @${l.price?.toFixed?.(2) || l.price}`).join(', ');
+        prompt += '\n';
+      }
+      if (g.boxes.length > 0) {
+        prompt += `    Boxes (${g.boxes.length}): `;
+        const sample = g.boxes.slice(-5);
+        prompt += sample.map(b => `[${b.y1?.toFixed?.(2) || b.y1}-${b.y2?.toFixed?.(2) || b.y2}]`).join(', ');
+        prompt += '\n';
+      }
+    }
+    prompt += `\nYou can SEE the indicator graphics above. Use them in your analysis — reference the levels, signals, and zones they show.\n`;
   }
 
   if (macroContext) {
@@ -184,11 +224,13 @@ app.post('/api/analyze', async (req, res) => {
   try {
     const { message } = req.body;
 
-    // 1. Get current chart context
-    const [chartState, ohlcv, indicators] = await Promise.all([
+    // 1. Get current chart context (including indicator values and graphics)
+    const [chartState, ohlcv, indicators, indValues, indGraphics] = await Promise.all([
       getChartState().catch(() => null),
       getOhlcv(50).catch(() => null),
-      getIndicators().catch(() => null)
+      getIndicators().catch(() => null),
+      getIndicatorValues().catch(() => []),
+      getIndicatorGraphics().catch(() => [])
     ]);
 
     // 2. Optionally get macro context
@@ -198,9 +240,9 @@ app.post('/api/analyze', async (req, res) => {
       if (resp.ok) macroContext = await resp.json();
     } catch {}
 
-    // 3. Build prompt
+    // 3. Build prompt with full indicator data
     const systemPrompt = buildSystemPrompt(
-      chartState, ohlcv, indicators, macroContext
+      chartState, ohlcv, indicators, macroContext, indValues, indGraphics
     );
 
     // 4. Add to conversation
