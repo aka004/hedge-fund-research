@@ -140,4 +140,9 @@ OPERATOR_REGISTRY: dict[str, OperatorSpec] = {
 }
 
 # Column names the expression engine recognises as data inputs
-VALID_COLUMNS = {"open", "high", "low", "close", "volume", "returns"}
+VALID_COLUMNS = {
+    # OHLCV
+    "open", "high", "low", "close", "volume", "returns",
+    # Fundamentals (45-day filing lag, forward-filled quarterly)
+    "earnings_yield", "revenue_growth", "profit_margin", "expense_ratio",
+}

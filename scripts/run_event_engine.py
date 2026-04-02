@@ -165,6 +165,24 @@ def load_ohlcv_dataframes(symbols: list[str]) -> dict[str, pd.DataFrame]:
     n_symbols = len(result.get("close", pd.DataFrame()).columns)
     n_days = len(result.get("close", pd.DataFrame()))
     logger.info(f"OHLCV loaded: {n_symbols} symbols, {n_days} trading days")
+
+    # Load fundamental daily DataFrames if available (45-day filing lag, forward-filled)
+    fund_dir = PARQUET_DIR / "fundamentals_daily"
+    fund_metrics = ("earnings_yield", "revenue_growth", "profit_margin", "expense_ratio")
+    for metric in fund_metrics:
+        path = fund_dir / f"{metric}.parquet"
+        if path.exists():
+            df = pd.read_parquet(path)
+            df.index = pd.to_datetime(df.index)
+            # Filter to requested symbols only
+            available_cols = [s for s in symbols if s in df.columns]
+            if available_cols:
+                result[metric] = df[available_cols]
+
+    n_fund = sum(1 for m in fund_metrics if m in result)
+    if n_fund:
+        logger.info(f"Fundamentals loaded: {n_fund} metrics")
+
     return result
 
 

@@ -86,6 +86,14 @@ on a stock×time matrix and backtested. You receive performance feedback and ite
 **Data columns** (all are DataFrames: dates × stocks):
   open, high, low, close, volume, returns (log returns from close)
 
+**Fundamental columns** (quarterly data with actual SEC filing dates, forward-filled daily):
+  earnings_yield   — TTM net income / price (higher = cheaper, like inverse PE)
+  revenue_growth   — YoY quarterly revenue growth rate
+  profit_margin    — net income / revenue
+  expense_ratio    — total expenses / revenue
+  NOTE: Some stocks lack data — NaN stocks are excluded automatically.
+  These update quarterly so ts_* operators with windows < 60 days won't vary much.
+
 **Time-series operators** (per stock, rolling window d in [1, 252]):
   ts_mean(x, d)    — rolling mean
   ts_std(x, d)     — rolling std
@@ -145,9 +153,12 @@ on a stock×time matrix and backtested. You receive performance feedback and ite
 ## Expression design tips
 - cs_rank() normalises to 0-1, making signals comparable across regimes
 - Combining ts operators at different windows captures multi-scale momentum
-- ts_corr(close, volume, d) captures price-volume divergence (smart money signal)
 - delta(close, d) / ts_std(close, d) is volatility-adjusted momentum
 - Subtracting two cs_rank() terms creates a long-short signal
+- cs_rank(earnings_yield) adds a value tilt (buy cheap momentum stocks)
+- cs_rank(revenue_growth) * cs_rank(momentum) = growth-momentum combo
+- Fundamentals change quarterly — use cs_rank() not ts_* for fundamentals
+- Combining momentum with earnings_yield reduces momentum crash risk
 """).strip()
 
 
