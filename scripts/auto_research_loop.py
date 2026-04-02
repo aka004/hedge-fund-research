@@ -111,12 +111,16 @@ def analyze_batch(history: list[dict]) -> dict:
 
     # ── Expression diversity check ──
     if len(expressions) >= 4:
-        # Check if expressions share too many operators
+        import re
+        # Extract operator+args tokens (e.g. "ts_delta(close,5)") not just operator names,
+        # so ts_delta(close,5) and ts_delta(returns,21) are treated as different signals.
         op_sets = []
         for expr in expressions:
-            import re
-            ops = set(re.findall(r'\b(ts_\w+|cs_\w+)\b', expr))
-            op_sets.append(ops)
+            # Match function calls with their arguments: ts_mean(close, 20), cs_rank(x)
+            calls = set(re.findall(r'((?:ts_|cs_)\w+\([^)]*\))', expr.replace(" ", "")))
+            # Also include bare operator names as fallback for nested expressions
+            bare = set(re.findall(r'\b(ts_\w+|cs_\w+)\b', expr))
+            op_sets.append(calls | bare)
         # Jaccard similarity between consecutive expressions
         similarities = []
         for i in range(1, len(op_sets)):
@@ -432,7 +436,6 @@ def main() -> None:
             print(f"PSR={winner.psr:.3f}  Sharpe={winner.sharpe:.3f}  "
                   f"CAGR={winner.cagr:.1f}%")
             print(f"{'='*60}")
-            # TODO: trigger out-of-sample validation
             return
 
         # ── Analyze batch results ─────────────────────────────────────────
@@ -465,9 +468,19 @@ def main() -> None:
                     total_spent = 0
 
                 if changes.get("force_monthly"):
-                    # Patch the default backtest params in alpha_gpt
-                    logger.info("Forcing monthly rebalance in future iterations")
-                    # This is handled via the LLM prompt hint
+                    import scripts.alpha_gpt as agpt
+                    # Patch spec_to_run_params to enforce monthly rebalance
+                    _orig_spec_to_run = agpt.spec_to_run_params
+                    def _forced_monthly_params(spec, iteration, _orig=_orig_spec_to_run):
+                        params = _orig(spec, iteration)
+                        params["rebalance_frequency"] = "monthly"
+                        params["max_holding_days"] = max(
+                            params["max_holding_days"],
+                            changes.get("max_holding_days", 45),
+                        )
+                        return params
+                    agpt.spec_to_run_params = _forced_monthly_params
+                    logger.info("Forced monthly rebalance + max_holding >= 45d")
             else:
                 logger.info("Shift rejected — continuing with current config")
 

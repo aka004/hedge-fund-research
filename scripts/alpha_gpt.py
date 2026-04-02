@@ -25,6 +25,7 @@ import textwrap
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -54,6 +55,7 @@ from scripts.run_event_engine import (
     load_ohlcv_dataframes,
     load_price_dataframes,
 )
+from afml.cpcv import CombPurgedKFold
 from strategy.signals.combiner import SignalCombiner
 from strategy.signals.expression import ExpressionSignal, ParseError, parse
 
@@ -213,6 +215,40 @@ def diagnose(score: RunScore) -> str:
         return "PASSED — PSR target met."
 
     return "; ".join(issues) if issues else "marginal — close but PSR not met"
+
+
+def validate_winner_cpcv(
+    daily_returns: pd.Series,
+    pbo_threshold: float = 0.5,
+) -> dict:
+    """Run CPCV on a winning strategy's daily returns to check for overfitting.
+
+    Returns dict with pbo, n_paths, median_sharpe, passed.
+    """
+    if len(daily_returns) < 252:
+        return {"pbo": 1.0, "n_paths": 0, "median_sharpe": 0.0, "passed": False,
+                "reason": "insufficient data for CPCV"}
+
+    # Build a dummy DataFrame with DatetimeIndex for CPCV splitter
+    X = pd.DataFrame({"ret": daily_returns.values}, index=daily_returns.index)
+    y = daily_returns
+
+    cpcv = CombPurgedKFold(n_splits=6, n_test_groups=2, embargo_pct=0.01)
+    result = cpcv.backtest_paths(X, y)
+
+    median_sharpe = float(np.median(result.path_sharpes)) if result.path_sharpes else 0.0
+    passed = result.pbo < pbo_threshold and median_sharpe > 0
+
+    return {
+        "pbo": round(result.pbo, 3),
+        "n_paths": result.n_paths,
+        "median_sharpe": round(median_sharpe, 3),
+        "passed": passed,
+        "reason": (
+            f"PBO={result.pbo:.1%}, median path Sharpe={median_sharpe:.3f}"
+            + ("" if passed else " — likely overfit")
+        ),
+    }
 
 
 # ── Build user message ────────────────────────────────────────────────────────
@@ -458,6 +494,7 @@ def run_alpha_gpt(
             duckdb_store=duckdb_store,
             parquet_storage=parquet_storage,
             combiner=combiner,
+            n_strategies_tested=len(history) + 1,
         )
 
         diag = diagnose(score)
@@ -487,12 +524,30 @@ def run_alpha_gpt(
         if score.psr >= PSR_TARGET and score.passed:
             logger.info(
                 f"\n{'='*60}\n"
-                f"ALPHA FOUND at iteration {iteration}!\n"
+                f"ALPHA CANDIDATE at iteration {iteration}!\n"
                 f"Expression: {expr}\n"
                 f"PSR={score.psr:.3f}  Sharpe={score.sharpe:.3f}  "
                 f"CAGR={score.cagr:.1f}%\n"
                 f"{'='*60}"
             )
+
+            # ── CPCV validation gate ─────────────────────────────────────
+            if score.daily_returns is not None:
+                cpcv_result = validate_winner_cpcv(score.daily_returns)
+                logger.info(f"CPCV: {cpcv_result['reason']}")
+                history[-1]["cpcv"] = cpcv_result
+                save_history(history)
+
+                if not cpcv_result["passed"]:
+                    logger.warning(
+                        f"CPCV FAILED (PBO={cpcv_result['pbo']:.1%}) — "
+                        "likely overfit, continuing search"
+                    )
+                    continue
+            else:
+                logger.warning("No daily returns for CPCV — skipping validation")
+
+            logger.info("CPCV PASSED — alpha confirmed")
             return score
 
     best = max(history, key=lambda h: h["score"].get("score", -999), default=None)

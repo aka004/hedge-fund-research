@@ -73,6 +73,7 @@ class RunScore:
     score: float  # composite score
     passed: bool
     params: dict
+    daily_returns: pd.Series = None  # kept for CPCV validation, not serialized
 
 
 def composite_score(
@@ -267,6 +268,7 @@ def run_config(
     duckdb_store,
     parquet_storage,
     combiner=None,  # optional SignalCombiner override (used by AlphaGPT)
+    n_strategies_tested: int = 1,  # cumulative count for DSR correction
 ) -> RunScore:
     config_id = params["label"]
     logger.info(f"  Running: {config_id}")
@@ -353,15 +355,15 @@ def run_config(
         trade_log=result.trade_log if not result.trade_log.empty else None,
     )
 
-    # PSR — use n_strategies=1 during grid discovery.
-    # Deflated PSR with n=34 approaches 0 for any realistic Sharpe (mathematical
-    # artifact of multiple-testing correction) and is only meaningful for FINAL
-    # validation of the single selected winner.
+    # PSR with cumulative multiple-testing correction (Bailey & López de Prado).
+    # n_strategies_tested should be the total number of strategies evaluated
+    # across all sessions to properly correct for p-hacking during discovery.
     psr_val = 0.0
     if len(result.daily_returns) >= 252:
         try:
             psr_res = deflated_sharpe(
-                result.daily_returns.values, n_strategies_tested=1
+                result.daily_returns.values,
+                n_strategies_tested=max(1, n_strategies_tested),
             )
             psr_val = psr_res.psr
         except Exception:
@@ -427,6 +429,7 @@ def run_config(
         score=round(sc, 3),
         passed=passed,
         params=params,
+        daily_returns=result.daily_returns,
     )
 
     logger.info(
