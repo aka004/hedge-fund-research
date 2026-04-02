@@ -1,3 +1,4 @@
+import './env.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -14,6 +15,7 @@ import {
   getOhlcv,
   getIndicators,
   getIndicatorValues,
+  getIndicatorGraphics,
   getDrawings,
   getVisibleRange
 } from './cdp/chart-reader.js';
@@ -32,6 +34,7 @@ import {
   getPineErrors
 } from './cdp/pine-injector.js';
 import { startAnalystServer } from './analyst/server.js';
+import { injectPanel, removePanel, isPanelInjected } from './panel/inject.js';
 
 const TOOLS = [
   {
@@ -66,6 +69,11 @@ const TOOLS = [
   {
     name: 'tv_get_indicator_values',
     description: 'Get current indicator values from the data window. Returns the latest computed values for all active indicators.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'tv_get_indicator_graphics',
+    description: 'Get graphics (lines, labels, boxes) drawn by Pine Script indicators. Returns shapes painted by active indicator scripts on the chart.',
     inputSchema: { type: 'object', properties: {} }
   },
   {
@@ -207,6 +215,16 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {} }
   },
   {
+    name: 'tv_inject_panel',
+    description: 'Inject the AI Analyst chat panel into the TradingView page. The panel appears as a sidebar for interactive analysis.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'tv_remove_panel',
+    description: 'Remove the injected AI Analyst panel from TradingView.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
     name: 'tv_screenshot',
     description: 'Capture a screenshot of the TradingView chart. Returns base64-encoded PNG image.',
     inputSchema: { type: 'object', properties: {} }
@@ -229,6 +247,9 @@ async function handleToolCall(name, args) {
 
     case 'tv_get_indicator_values':
       return await getIndicatorValues();
+
+    case 'tv_get_indicator_graphics':
+      return await getIndicatorGraphics();
 
     case 'tv_get_drawings':
       return await getDrawings();
@@ -283,6 +304,14 @@ async function handleToolCall(name, args) {
 
     case 'tv_get_pine_errors':
       return await getPineErrors();
+
+    case 'tv_inject_panel':
+      await injectPanel();
+      return { success: true, message: 'AI panel injected into TradingView' };
+
+    case 'tv_remove_panel':
+      await removePanel();
+      return { success: true, message: 'AI panel removed' };
 
     case 'tv_screenshot': {
       const data = await screenshot();
@@ -343,13 +372,30 @@ async function main() {
     }
   });
 
-  // Start the analyst Express server alongside the MCP server
-  startAnalystServer(parseInt(process.env.ANALYST_PORT || '3456', 10));
+  const port = parseInt(process.env.ANALYST_PORT || '3456', 10);
+  const standalone = process.argv.includes('--standalone');
 
-  // Connect MCP via stdio
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('TradingView MCP Bridge running on stdio');
+  // Always start the analyst Express server
+  startAnalystServer(port);
+
+  if (standalone) {
+    // Standalone mode: just the HTTP server, no MCP stdio
+    console.error(`TradingView Bridge running standalone (analyst on :${port})`);
+    // Auto-inject panel after a short delay for chart to load
+    setTimeout(async () => {
+      try {
+        await injectPanel();
+        console.error('AI panel auto-injected');
+      } catch (e) {
+        console.error('Panel inject skipped (chart may not be ready):', e.message);
+      }
+    }, 3000);
+  } else {
+    // MCP mode: stdio transport for Claude Code integration
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error('TradingView MCP Bridge running on stdio');
+  }
 }
 
 main().catch((e) => {

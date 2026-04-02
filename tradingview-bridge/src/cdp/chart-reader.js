@@ -81,84 +81,63 @@ export async function getIndicatorValues() {
 
 export async function getIndicatorGraphics() {
   return evaluate(`(function() {
-    var chart = window.TradingViewApi._activeChartWidgetWV.value();
-    if (!chart) return [];
-    var model = chart._chartWidget.model().model();
-    var sources = model.dataSources();
-    var results = [];
-    for (var si = 0; si < sources.length; si++) {
-      var s = sources[si];
-      try {
-        var g = s._graphics;
-        if (!g || !g._primitivesCollection) continue;
-        var name = s.title ? s.title() : 'unknown';
-        var pc = g._primitivesCollection;
-        var graphics = { name: name, lines: [], labels: [], boxes: [] };
+    try {
+      var chart = window.TradingViewApi._activeChartWidgetWV.value();
+      if (!chart) return [];
+      var model = chart._chartWidget.model().model();
+      if (!model || typeof model.dataSources !== 'function') return [];
+      var sources = model.dataSources();
+      var results = [];
 
-        // Lines
+      function readCollection(pc, collName, key) {
         try {
-          var dwglines = pc.dwglines;
-          if (dwglines) {
-            var linesCol = dwglines.get('lines');
-            if (linesCol) {
-              var coll = linesCol.get(false);
-              if (coll && coll._primitivesDataById) {
-                coll._primitivesDataById.forEach(function(v) {
-                  graphics.lines.push({
-                    y1: v.y1, y2: v.y2,
-                    x1: v.x1, x2: v.x2,
-                    width: v.w, style: v.st
-                  });
-                });
-              }
-            }
-          }
-        } catch(e) {}
+          var coll = pc[collName];
+          if (!coll || typeof coll.get !== 'function') return [];
+          var sub = coll.get(key);
+          if (!sub || typeof sub.get !== 'function') return [];
+          var inner = sub.get(false);
+          if (!inner || !inner._primitivesDataById) return [];
+          var items = [];
+          inner._primitivesDataById.forEach(function(v) { items.push(v); });
+          return items;
+        } catch(e) { return []; }
+      }
 
-        // Labels
+      for (var si = 0; si < sources.length; si++) {
+        var s = sources[si];
         try {
-          var dwglabels = pc.dwglabels;
-          if (dwglabels) {
-            var labelsCol = dwglabels.get('labels');
-            if (labelsCol) {
-              var coll = labelsCol.get(false);
-              if (coll && coll._primitivesDataById) {
-                coll._primitivesDataById.forEach(function(v) {
-                  graphics.labels.push({
-                    text: v.t || '',
-                    price: v.y,
-                    time: v.x
-                  });
-                });
-              }
-            }
-          }
-        } catch(e) {}
+          var g = s._graphics;
+          if (!g || !g._primitivesCollection) continue;
+          var name = s.title ? s.title() : 'unknown';
+          var pc = g._primitivesCollection;
+          var graphics = { name: name, lines: [], labels: [], boxes: [] };
 
-        // Boxes
-        try {
-          var dwgboxes = pc.dwgboxes;
-          if (dwgboxes) {
-            var boxesCol = dwgboxes.get('boxes');
-            if (boxesCol) {
-              var coll = boxesCol.get(false);
-              if (coll && coll._primitivesDataById) {
-                coll._primitivesDataById.forEach(function(v) {
-                  graphics.boxes.push({
-                    y1: v.y1, y2: v.y2,
-                    x1: v.x1, x2: v.x2
-                  });
-                });
-              }
-            }
+          var rawLines = readCollection(pc, 'dwglines', 'lines');
+          for (var li = 0; li < rawLines.length; li++) {
+            var v = rawLines[li];
+            graphics.lines.push({ y1: v.y1, y2: v.y2, x1: v.x1, x2: v.x2, width: v.w, style: v.st });
           }
-        } catch(e) {}
 
-        var total = graphics.lines.length + graphics.labels.length + graphics.boxes.length;
-        if (total > 0) results.push(graphics);
-      } catch(e) {}
+          var rawLabels = readCollection(pc, 'dwglabels', 'labels');
+          for (var lbi = 0; lbi < rawLabels.length; lbi++) {
+            var lv = rawLabels[lbi];
+            graphics.labels.push({ text: lv.t || '', price: lv.y, time: lv.x });
+          }
+
+          var rawBoxes = readCollection(pc, 'dwgboxes', 'boxes');
+          for (var bi = 0; bi < rawBoxes.length; bi++) {
+            var bv = rawBoxes[bi];
+            graphics.boxes.push({ y1: bv.y1, y2: bv.y2, x1: bv.x1, x2: bv.x2 });
+          }
+
+          var total = graphics.lines.length + graphics.labels.length + graphics.boxes.length;
+          if (total > 0) results.push(graphics);
+        } catch(e) {}
+      }
+      return results;
+    } catch(e) {
+      return [];
     }
-    return results;
   })()`);
 }
 

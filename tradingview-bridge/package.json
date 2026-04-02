@@ -6,6 +6,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "standalone": "node src/index.js --standalone",
     "launch-tv": "bash scripts/launch-tv.sh"
   },
   "dependencies": {
