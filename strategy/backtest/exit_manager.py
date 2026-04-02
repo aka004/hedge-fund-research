@@ -24,6 +24,7 @@ class ExitConfig:
     stop_loss_mult: float = 2.0  # x daily vol
     max_holding_days: int = 21  # timeout
     vol_window: int = 100  # EWMA span for daily vol
+    use_cusum_reversal: bool = True  # enable CUSUM reversal exit (priority 2)
 
 
 class ExitManager:
@@ -90,7 +91,7 @@ class ExitManager:
                         trigger_price=close_price,
                     )
                 )
-            elif symbol in cusum_downside:
+            elif self.config.use_cusum_reversal and symbol in cusum_downside:
                 signals.append(
                     ExitSignal(
                         symbol=symbol,

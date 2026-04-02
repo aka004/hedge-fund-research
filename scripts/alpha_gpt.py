@@ -1,0 +1,590 @@
+#!/usr/bin/env python3
+"""
+AlphaGPT — LLM-driven alpha factor discovery via expression engine (Phase 1).
+
+The LLM proposes mathematical expressions over OHLCV data (e.g.
+"cs_rank(ts_corr(close, volume, 10)) - cs_rank(delta(close, 21))").
+Each expression is parsed, evaluated on the stock matrix, backtested,
+and the results feed back to the LLM for the next iteration.
+
+Stops when PSR > 0.95 or --max-iter is reached.
+
+Usage:
+    python scripts/alpha_gpt.py \\
+        --universe /tmp/universe_full.txt \\
+        --start 2015-01-01 --end 2024-12-31 \\
+        --max-iter 20
+"""
+
+import argparse
+import json
+import logging
+import os
+import sys
+import textwrap
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
+
+try:
+    from dotenv import load_dotenv
+    # Walk up from script dir until we find .env (handles worktrees)
+    _d = Path(__file__).resolve().parent
+    while _d != _d.parent:
+        if (_d / ".env").exists():
+            load_dotenv(_d / ".env", override=True)
+            break
+        _d = _d.parent
+except ImportError:
+    pass
+
+import anthropic
+
+from config import STORAGE_PATH
+from data.storage.duckdb_store import DuckDBStore
+from data.storage.parquet import ParquetStorage
+from scripts.auto_research import RunScore, run_config
+from scripts.preflight_check import run_preflight
+from scripts.run_event_engine import (
+    load_macro_dataframes,
+    load_ohlcv_dataframes,
+    load_price_dataframes,
+)
+from strategy.signals.combiner import SignalCombiner
+from strategy.signals.expression import ExpressionSignal, ParseError, parse
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+PARQUET_DIR = STORAGE_PATH / "parquet"
+HISTORY_PATH = Path(__file__).parent.parent / "data" / "cache" / "alpha_gpt_history.json"
+
+PSR_TARGET = 0.95
+SHARPE_MIN = 0.5
+CAGR_MIN = 3.0
+MAX_DD_LIMIT = 35.0
+
+
+# ── System prompt ─────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT = textwrap.dedent("""
+You are AlphaGPT, an expert quantitative researcher discovering alpha factors in US equities.
+
+You propose alpha expressions — mathematical formulas over OHLCV data — that get evaluated
+on a stock×time matrix and backtested. You receive performance feedback and iterate.
+
+## Expression language
+
+**Data columns** (all are DataFrames: dates × stocks):
+  open, high, low, close, volume, returns (log returns from close)
+
+**Fundamental columns** (quarterly data with actual SEC filing dates, forward-filled daily):
+  earnings_yield   — TTM net income / price (higher = cheaper, like inverse PE)
+  revenue_growth   — YoY quarterly revenue growth rate
+  profit_margin    — net income / revenue
+  expense_ratio    — total expenses / revenue
+  NOTE: Some stocks lack data — NaN stocks are excluded automatically.
+  These update quarterly so ts_* operators with windows < 60 days won't vary much.
+
+**Time-series operators** (per stock, rolling window d in [1, 252]):
+  ts_mean(x, d) / sma(x, d) — simple moving average (SMA)
+  ts_ema(x, d) / ema(x, d)  — exponential moving average (EMA, span=d)
+  ts_decay(x, d)    — linearly decaying weighted average (recent data gets more weight)
+  ts_std(x, d)      — rolling standard deviation
+  ts_sum(x, d)      — rolling sum
+  ts_max(x, d)      — rolling max
+  ts_min(x, d)      — rolling min
+  ts_rank(x, d)     — percentile rank within last d days (0 to 1)
+  ts_delta(x, d)    — x[t] - x[t-d]  (alias: delta)
+  ts_returns(x, d)  — simple returns: x[t]/x[t-d] - 1
+  ts_skew(x, d)     — rolling skewness (positive = right tail)
+  ts_kurt(x, d)     — rolling kurtosis (high = fat tails)
+  ts_zscore(x, d)   — time-series z-score: (x - mean_d) / std_d
+  ts_argmax(x, d)   — days since d-day high (0 = at high today)
+  ts_argmin(x, d)   — days since d-day low (0 = at low today)
+  ts_prod(x, d)     — rolling product (compound returns)
+  ts_corr(x, y, d)  — rolling correlation between two series
+  ts_cov(x, y, d)   — rolling covariance between two series
+  ts_vwap(price, volume, d) / vwap(price, volume, d) — volume-weighted avg price
+
+**Cross-sectional operators** (across all stocks, per day):
+  cs_rank(x)    — percentile rank across stocks (0 to 1)
+  cs_zscore(x)  — z-score across stocks
+  cs_demean(x)  — subtract cross-sectional mean (market-neutral)
+
+**Element-wise**:
+  abs(x), log(x), sign(x)
+
+**Arithmetic**: +, -, *, / with parentheses
+
+## Output format (strict JSON, no extra text)
+```json
+{
+  "expression": "<alpha expression>",
+  "backtest": {
+    "profit_take_mult": <float 1.5-6.0>,
+    "stop_loss_mult": <float 0.5-3.0>,
+    "max_holding_days": <int 10-60>,
+    "n_positions": <int 5-40>,
+    "rebalance_frequency": "<weekly|monthly>",
+    "position_sizing": "<equal|kelly|hrp>",
+    "use_cusum_gate": <true|false>,
+    "use_regime": <true|false>,
+    "slippage_bps": <int 10-100>
+  },
+  "rationale": "<1-2 sentence hypothesis>"
+}
+```
+
+## Hard constraints
+- No look-ahead bias (the engine truncates data to as_of_date automatically).
+- slippage_bps >= 10, n_positions >= 5.
+- Window parameters d must be integers in [1, 252].
+- Do NOT repeat an expression you already tried.
+
+## Strategy targets
+- PSR > 0.95, Sharpe > 0.5, CAGR > 3%, Max DD < 35%, Profit Factor > 1.2
+
+## Diagnosis guide
+- "too few trades" → more positions, weekly rebalance, broader expression
+- "cost drag" → lower slippage, monthly rebalance, longer holding
+- "short avg holding" → increase max_holding_days, raise profit_take_mult
+- "deep drawdown" → use_regime=true, tighter stop, hrp sizing
+- "low win rate" → add cross-sectional ranking (cs_rank), combine multiple signals
+- "low profit factor" → wider profit targets, longer lookback windows
+- "high correlation to market" → cross-sectional z-score removes beta exposure
+
+## Expression design tips
+- cs_rank() normalises to 0-1, making signals comparable across regimes
+- Combining ts operators at different windows captures multi-scale momentum
+- delta(close, d) / ts_std(close, d) is volatility-adjusted momentum
+- Subtracting two cs_rank() terms creates a long-short signal
+- cs_rank(earnings_yield) adds a value tilt (buy cheap momentum stocks)
+- cs_rank(revenue_growth) * cs_rank(momentum) = growth-momentum combo
+- Fundamentals change quarterly — use cs_rank() not ts_* for fundamentals
+- Combining momentum with earnings_yield reduces momentum crash risk
+- vwap(close, volume, 20) gives institutional fair-value reference
+- close / vwap(close, volume, 20) - 1 = price vs VWAP deviation
+- ts_ema(x, d) reacts faster to changes than ts_mean(x, d) (SMA)
+- ts_argmax(close, 252) = days since 52-week high (momentum timing)
+- ts_argmin(close, 252) = days since 52-week low (reversion timing)
+- ts_skew(returns, 63) detects crash-prone vs lottery-ticket stocks
+- ts_zscore(close, 63) = how extreme is today vs recent history
+- cs_demean() removes market-level effects without ranking
+""").strip()
+
+
+# ── Diagnosis helper ──────────────────────────────────────────────────────────
+
+
+def diagnose(score: RunScore) -> str:
+    """Generate a plain-English diagnosis from a RunScore."""
+    issues = []
+
+    if score.total_trades < 100:
+        issues.append(f"too few trades ({score.total_trades})")
+    if score.avg_holding < 5:
+        issues.append(f"avg holding {score.avg_holding:.1f}d too short")
+    if score.sharpe < SHARPE_MIN:
+        issues.append(f"Sharpe {score.sharpe:.3f} < {SHARPE_MIN}")
+    if score.cagr < CAGR_MIN:
+        issues.append(f"CAGR {score.cagr:.1f}% < {CAGR_MIN}%")
+    if abs(score.max_dd) > MAX_DD_LIMIT:
+        issues.append(f"DD {score.max_dd:.1f}% > {MAX_DD_LIMIT}%")
+    if score.profit_factor < 1.2:
+        issues.append(f"PF {score.profit_factor:.3f} < 1.2")
+    if score.win_rate < 0.40:
+        issues.append(f"win rate {score.win_rate:.1%} < 40%")
+    if score.avg_win_pct > 0 and score.avg_loss_pct > 0:
+        slippage_bps = score.params.get("slippage_bps", 25)
+        cost_pct = slippage_bps / 100
+        if cost_pct > 0.3 * score.avg_win_pct:
+            issues.append(f"cost drag: slip {cost_pct:.2f}% > 30% of avg win")
+
+    if score.psr >= PSR_TARGET and score.passed:
+        return "PASSED — PSR target met."
+
+    return "; ".join(issues) if issues else "marginal — close but PSR not met"
+
+
+# ── Build user message ────────────────────────────────────────────────────────
+
+
+def build_user_message(history: list[dict]) -> str:
+    lines = []
+
+    if not history:
+        lines.append("No iterations yet. Propose the first alpha expression.")
+        return "\n".join(lines)
+
+    lines.append(f"=== ITERATION HISTORY ({len(history)} attempts) ===")
+    for entry in history:
+        i = entry["iteration"]
+        spec = entry["spec"]
+        score = entry.get("score", {})
+        diag = entry["diagnosis"]
+        expr = spec.get("expression", "?")
+        bp = spec.get("backtest", {})
+
+        if score:
+            lines.append(
+                f"\nIter {i}: {expr}"
+                f" | sizing={bp.get('position_sizing')} rebal={bp.get('rebalance_frequency')}"
+                f" slip={bp.get('slippage_bps')}bps"
+            )
+            lines.append(
+                f"  Sharpe={score.get('sharpe', 0):.3f}"
+                f" CAGR={score.get('cagr', 0):.1f}%"
+                f" DD={score.get('max_dd', 0):.1f}%"
+                f" WR={score.get('win_rate', 0):.1%}"
+                f" Trades={score.get('total_trades', 0)}"
+                f" Hold={score.get('avg_holding', 0):.1f}d"
+                f" PSR={score.get('psr', 0):.3f}"
+            )
+        else:
+            lines.append(f"\nIter {i}: {expr} — NO RESULT")
+
+        lines.append(f"  Rationale: {spec.get('rationale', '')}")
+        lines.append(f"  Diagnosis: {diag}")
+
+    lines.append("\nPropose the NEXT alpha expression. Return ONLY the JSON.")
+    return "\n".join(lines)
+
+
+# ── Parse and validate ────────────────────────────────────────────────────────
+
+
+def parse_spec(raw: str) -> dict:
+    """Extract JSON from LLM response (handles markdown code fences)."""
+    text = raw.strip()
+    if "```" in text:
+        start = text.find("{", text.find("```"))
+        end = text.rfind("}") + 1
+        text = text[start:end]
+    return json.loads(text)
+
+
+def validate_spec(spec: dict) -> list[str]:
+    """Return list of validation errors (empty = valid)."""
+    errors = []
+    expr = spec.get("expression")
+    if not expr:
+        errors.append("'expression' field missing or empty")
+    else:
+        try:
+            parse(expr)
+        except ParseError as e:
+            errors.append(f"Expression parse error: {e}")
+
+    bp = spec.get("backtest")
+    if not bp:
+        errors.append("'backtest' dict missing")
+    else:
+        if bp.get("slippage_bps", 10) < 10:
+            errors.append("slippage_bps must be >= 10")
+        if bp.get("n_positions", 5) < 5:
+            errors.append("n_positions must be >= 5")
+    return errors
+
+
+# ── Build signal from expression ──────────────────────────────────────────────
+
+
+def build_signal(expression: str, ohlcv: dict[str, pd.DataFrame]) -> SignalCombiner:
+    """Create a SignalCombiner wrapping a single ExpressionSignal."""
+    gen = ExpressionSignal(expression=expression, ohlcv=ohlcv)
+    return SignalCombiner([gen])
+
+
+def spec_to_run_params(spec: dict, iteration: int) -> dict:
+    """Convert AlphaGPT spec to run_config params dict."""
+    bp = spec.get("backtest", {})
+    return {
+        "label": f"alphagpt_iter{iteration:03d}",
+        "profit_take_mult": float(bp.get("profit_take_mult", 3.0)),
+        "stop_loss_mult": float(bp.get("stop_loss_mult", 1.5)),
+        "max_holding_days": int(bp.get("max_holding_days", 30)),
+        "max_positions": int(bp.get("n_positions", 20)),
+        "rebalance_frequency": bp.get("rebalance_frequency", "monthly"),
+        "position_sizing": bp.get("position_sizing", "hrp"),
+        "use_cusum_gate": bool(bp.get("use_cusum_gate", True)),
+        "use_regime": bool(bp.get("use_regime", True)),
+        "slippage_bps": int(bp.get("slippage_bps", 25)),
+        "cusum_recency_days": 15,
+        "use_cusum_reversal_exit": False,
+        "use_meta": False,
+    }
+
+
+# ── History I/O ───────────────────────────────────────────────────────────────
+
+
+def load_history() -> list[dict]:
+    if HISTORY_PATH.exists():
+        try:
+            return json.loads(HISTORY_PATH.read_text())
+        except Exception:
+            return []
+    return []
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """Handle numpy types in JSON serialization."""
+    def default(self, obj):
+        import numpy as np
+        if isinstance(obj, (np.bool_, np.integer)):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        return super().default(obj)
+
+
+def save_history(history: list[dict]) -> None:
+    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    HISTORY_PATH.write_text(json.dumps(history, indent=2, cls=_NumpyEncoder))
+
+
+# ── Main loop ─────────────────────────────────────────────────────────────────
+
+
+def run_alpha_gpt(
+    universe: list[str],
+    close_prices: pd.DataFrame,
+    open_prices: pd.DataFrame,
+    ohlcv: dict[str, pd.DataFrame],
+    macro_prices,
+    sentiment_prices,
+    start: str,
+    end: str,
+    duckdb_store,
+    parquet_storage,
+    max_iter: int = 20,
+    model: str = "claude-sonnet-4-6",
+    resume: bool = True,
+) -> RunScore | None:
+    """Run the AlphaGPT expression discovery loop."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.error("ANTHROPIC_API_KEY not set. Export it or add to .env")
+        sys.exit(1)
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    history: list[dict] = load_history() if resume else []
+    start_iter = len(history) + 1
+    logger.info(
+        f"AlphaGPT starting at iteration {start_iter} "
+        f"(model={model}, max_iter={max_iter})"
+    )
+
+    for iteration in range(start_iter, start_iter + max_iter):
+        logger.info(f"\n{'='*60}")
+        logger.info(f"AlphaGPT — Iteration {iteration}/{start_iter + max_iter - 1}")
+        logger.info(f"{'='*60}")
+
+        # ── Ask the LLM ──────────────────────────────────────────────────────
+        user_msg = build_user_message(history)
+
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=1024,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            raw = response.content[0].text
+        except Exception as e:
+            logger.error(f"LLM call failed: {e}")
+            break
+
+        logger.info(f"LLM response:\n{raw[:500]}{'...' if len(raw) > 500 else ''}")
+
+        # ── Parse and validate ────────────────────────────────────────────────
+        try:
+            spec = parse_spec(raw)
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON parse failed: {e}")
+            history.append({
+                "iteration": iteration, "spec": {"raw": raw},
+                "score": {}, "diagnosis": f"JSON parse error: {e}",
+            })
+            save_history(history)
+            continue
+
+        errors = validate_spec(spec)
+        if errors:
+            logger.warning(f"Validation failed: {errors}")
+            history.append({
+                "iteration": iteration, "spec": spec,
+                "score": {}, "diagnosis": f"Validation: {errors}",
+            })
+            save_history(history)
+            continue
+
+        expr = spec["expression"]
+        logger.info(f"Expression: {expr}")
+        logger.info(f"Rationale: {spec.get('rationale', '')}")
+
+        # ── Build signal and run backtest ─────────────────────────────────────
+        try:
+            combiner = build_signal(expr, ohlcv)
+        except (ParseError, Exception) as e:
+            logger.error(f"Signal build failed: {e}")
+            history.append({
+                "iteration": iteration, "spec": spec,
+                "score": {}, "diagnosis": f"Build error: {e}",
+            })
+            save_history(history)
+            continue
+
+        params = spec_to_run_params(spec, iteration)
+        score = run_config(
+            params=params,
+            universe=universe,
+            close_prices=close_prices,
+            open_prices=open_prices,
+            macro_prices=macro_prices,
+            sentiment_prices=sentiment_prices,
+            start=start,
+            end=end,
+            duckdb_store=duckdb_store,
+            parquet_storage=parquet_storage,
+            combiner=combiner,
+        )
+
+        diag = diagnose(score)
+        logger.info(
+            f"Result: Sharpe={score.sharpe:.3f} CAGR={score.cagr:.1f}% "
+            f"DD={score.max_dd:.1f}% PSR={score.psr:.3f} passed={score.passed}"
+        )
+        logger.info(f"Diagnosis: {diag}")
+
+        # ── Record ────────────────────────────────────────────────────────────
+        history.append({
+            "iteration": iteration,
+            "spec": spec,
+            "score": {
+                "sharpe": score.sharpe, "cagr": score.cagr,
+                "max_dd": score.max_dd, "profit_factor": score.profit_factor,
+                "win_rate": score.win_rate, "avg_win_pct": score.avg_win_pct,
+                "avg_loss_pct": score.avg_loss_pct, "total_trades": score.total_trades,
+                "avg_holding": score.avg_holding, "psr": score.psr,
+                "score": score.score, "passed": score.passed,
+            },
+            "diagnosis": diag,
+            "timestamp": datetime.now().isoformat(),
+        })
+        save_history(history)
+
+        if score.psr >= PSR_TARGET and score.passed:
+            logger.info(
+                f"\n{'='*60}\n"
+                f"ALPHA FOUND at iteration {iteration}!\n"
+                f"Expression: {expr}\n"
+                f"PSR={score.psr:.3f}  Sharpe={score.sharpe:.3f}  "
+                f"CAGR={score.cagr:.1f}%\n"
+                f"{'='*60}"
+            )
+            return score
+
+    best = max(history, key=lambda h: h["score"].get("score", -999), default=None)
+    if best:
+        logger.info(
+            f"\nMax iterations reached. Best: iter {best['iteration']} "
+            f"(score={best['score'].get('score', -999):.3f})"
+        )
+    logger.info(f"History saved to {HISTORY_PATH}")
+    return None
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="AlphaGPT: expression-based factor discovery")
+    ap.add_argument("--universe", default=None, help="Universe file (one ticker/line) or 'all' for full parquet universe")
+    ap.add_argument("--start", default="2015-01-01")
+    ap.add_argument("--end", default="2024-12-31")
+    ap.add_argument("--max-iter", type=int, default=20)
+    ap.add_argument("--model", default="claude-sonnet-4-6")
+    ap.add_argument("--no-resume", action="store_true", help="Start fresh")
+    ap.add_argument("--skip-preflight", action="store_true")
+    args = ap.parse_args()
+
+    # ── Universe ──────────────────────────────────────────────────────────────
+    if args.universe == "all":
+        prices_dir = PARQUET_DIR / "prices"
+        universe = sorted([p.stem for p in prices_dir.glob("*.parquet") if p.stem != "SPY"])
+        logger.info(f"Using full parquet universe: {len(universe)} symbols")
+    elif args.universe:
+        universe = [t.strip() for t in Path(args.universe).read_text().splitlines() if t.strip()]
+    else:
+        universe = [
+            "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
+            "JPM", "GS", "BAC", "BRK-B", "JNJ", "UNH", "PFE",
+            "XOM", "CVX", "COP", "NEE", "DUK", "SPY", "QQQ", "IWM",
+        ]
+        logger.info(f"Using default {len(universe)}-ticker universe")
+
+    # ── Data ──────────────────────────────────────────────────────────────────
+    duckdb_store = DuckDBStore(PARQUET_DIR)
+    parquet_storage = ParquetStorage(PARQUET_DIR)
+
+    logger.info(f"Loading data for {len(universe)} symbols...")
+    close_prices, open_prices = load_price_dataframes(universe)
+    ohlcv = load_ohlcv_dataframes(universe)
+
+    if close_prices.empty:
+        logger.error("No price data. Run fetch_data.py first.")
+        sys.exit(1)
+
+    available = [s for s in universe if s in close_prices.columns]
+    logger.info(f"Data for {len(available)}/{len(universe)} symbols")
+
+    from datetime import date as date_cls
+    macro_prices, sentiment_prices = load_macro_dataframes(
+        date_cls.fromisoformat(args.start), date_cls.fromisoformat(args.end)
+    )
+
+    # ── Preflight ─────────────────────────────────────────────────────────────
+    if not args.skip_preflight:
+        logger.info("Running pre-flight checks...")
+        if not run_preflight(close_prices, available, n_sample=min(30, len(available))):
+            logger.error("Pre-flight failed")
+            sys.exit(1)
+        logger.info("Pre-flight passed.")
+
+    # ── Run ───────────────────────────────────────────────────────────────────
+    winner = run_alpha_gpt(
+        universe=available,
+        close_prices=close_prices,
+        open_prices=open_prices,
+        ohlcv=ohlcv,
+        macro_prices=macro_prices,
+        sentiment_prices=sentiment_prices,
+        start=args.start,
+        end=args.end,
+        duckdb_store=duckdb_store,
+        parquet_storage=parquet_storage,
+        max_iter=args.max_iter,
+        model=args.model,
+        resume=not args.no_resume,
+    )
+
+    if winner:
+        print(f"\nAlpha found! PSR={winner.psr:.3f} Sharpe={winner.sharpe:.3f} CAGR={winner.cagr:.1f}%")
+    else:
+        print(f"\nMax iterations reached. No PSR > {PSR_TARGET} found.")
+        print(f"Review: {HISTORY_PATH}")
+
+
+if __name__ == "__main__":
+    main()

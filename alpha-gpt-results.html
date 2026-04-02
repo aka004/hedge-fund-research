@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlphaGPT — Expression Engine Results</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9;
+           --green: #3fb950; --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
+           --purple: #bc8cff; --orange: #d18616; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 24px; }
+  h1 { font-size: 1.6rem; margin-bottom: 8px; }
+  .subtitle { color: #8b949e; margin-bottom: 24px; font-size: 0.9rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card h2 { font-size: 1.1rem; margin-bottom: 12px; color: var(--blue); }
+  .metric { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .metric:last-child { border-bottom: none; }
+  .metric-label { color: #8b949e; font-size: 0.85rem; }
+  .metric-value { font-weight: 600; font-size: 0.95rem; }
+  .positive { color: var(--green); }
+  .negative { color: var(--red); }
+  .neutral { color: var(--yellow); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { text-align: left; padding: 10px 8px; border-bottom: 2px solid var(--border); color: var(--blue); position: sticky; top: 0; background: var(--card); cursor: pointer; }
+  th:hover { color: var(--purple); }
+  td { padding: 8px; border-bottom: 1px solid var(--border); }
+  tr:hover td { background: rgba(88, 166, 255, 0.05); }
+  .expr { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.78rem; color: var(--purple); word-break: break-all; }
+  .diag { font-size: 0.78rem; color: var(--yellow); }
+  .rationale { font-size: 0.78rem; color: #8b949e; font-style: italic; }
+  .best-row td { background: rgba(63, 185, 80, 0.08); }
+  .chart-container { height: 250px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+  .badge-pass { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-fail { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-close { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .section { margin-bottom: 32px; }
+  .header-row { display: flex; align-items: baseline; gap: 16px; margin-bottom: 16px; }
+  .flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+  .flow-step { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; font-size: 0.82rem; }
+  .flow-arrow { color: var(--blue); font-size: 1.2rem; }
+</style>
+</head>
+<body>
+
+<h1>AlphaGPT — Expression Engine Results</h1>
+<p class="subtitle">LLM-driven alpha factor discovery via OHLCV matrix transformation</p>
+
+<div class="flow">
+  <div class="flow-step">LLM proposes expression</div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step">Parser &rarr; AST</div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step">Evaluate on OHLCV matrix</div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step">Score &rarr; Signal</div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step">EventDrivenEngine backtest</div>
+  <span class="flow-arrow">&rarr;</span>
+  <div class="flow-step">Diagnose &amp; iterate</div>
+</div>
+
+<div class="grid" id="summary-cards"></div>
+
+<div class="section">
+  <h2 style="margin-bottom: 12px; color: var(--blue);">Iteration Comparison</h2>
+  <div class="grid">
+    <div class="card"><div class="chart-container"><canvas id="chart-sharpe"></canvas></div></div>
+    <div class="card"><div class="chart-container"><canvas id="chart-cagr"></canvas></div></div>
+    <div class="card"><div class="chart-container"><canvas id="chart-trades"></canvas></div></div>
+    <div class="card"><div class="chart-container"><canvas id="chart-score"></canvas></div></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2 style="margin-bottom: 12px; color: var(--blue);">All Iterations</h2>
+  <div class="card" style="overflow-x: auto;">
+    <table id="results-table">
+      <thead>
+        <tr>
+          <th data-sort="iteration">#</th>
+          <th data-sort="expression">Expression</th>
+          <th data-sort="sharpe">Sharpe</th>
+          <th data-sort="cagr">CAGR%</th>
+          <th data-sort="max_dd">MaxDD%</th>
+          <th data-sort="win_rate">WR%</th>
+          <th data-sort="profit_factor">PF</th>
+          <th data-sort="total_trades">Trades</th>
+          <th data-sort="avg_holding">Hold</th>
+          <th data-sort="score">Score</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" id="detail-cards"></div>
+
+<script>
+// ── DATA (injected from alpha_gpt_history.json) ──
+const DATA = [
+  {
+    "iteration": 1,
+    "spec": {
+      "expression": "cs_rank(ts_delta(close, 21) / ts_std(close, 21)) - cs_rank(ts_delta(volume, 21) / ts_mean(volume, 63))",
+      "backtest": {
+        "profit_take_mult": 3.0,
+        "stop_loss_mult": 1.5,
+        "max_holding_days": 30,
+        "n_positions": 20,
+        "rebalance_frequency": "weekly",
+        "position_sizing": "hrp",
+        "use_cusum_gate": true,
+        "use_regime": true,
+        "slippage_bps": 20
+      },
+      "rationale": "Volatility-adjusted price momentum minus abnormal volume growth: stocks with strong risk-adjusted price gains but declining relative volume tend to have more durable uptrends (institutional accumulation without crowd euphoria). The long-short cross-sectional ranking removes market beta and normalizes signals across regimes."
+    },
+    "score": {
+      "sharpe": -0.114,
+      "cagr": 1.42,
+      "max_dd": -7.58,
+      "profit_factor": 1.366,
+      "win_rate": 0.484,
+      "avg_win_pct": 5.13,
+      "avg_loss_pct": 3.53,
+      "total_trades": 2205,
+      "avg_holding": 9.8,
+      "psr": 1.0,
+      "score": 1.643,
+      "passed": 0
+    },
+    "diagnosis": "Sharpe -0.114 < 0.5; CAGR 1.4% < 3.0%",
+    "timestamp": "2026-04-01T15:09:17.399317"
+  },
+  {
+    "iteration": 2,
+    "spec": {
+      "expression": "cs_rank(ts_corr(close, volume, 10)) - cs_rank(ts_corr(close, volume, 63))",
+      "backtest": {
+        "profit_take_mult": 3.0,
+        "stop_loss_mult": 1.5,
+        "max_holding_days": 30,
+        "n_positions": 20,
+        "rebalance_frequency": "weekly",
+        "position_sizing": "hrp",
+        "use_cusum_gate": false,
+        "use_regime": true,
+        "slippage_bps": 15
+      },
+      "rationale": "Short-term price-volume correlation minus long-term price-volume correlation captures stocks where smart money is quietly accumulating (low short-term correlation) while the longer-term trend remains positive. Cross-sectional ranking removes market-wide effects and normalizes across regimes."
+    },
+    "score": {
+      "sharpe": 0.141,
+      "cagr": 2.57,
+      "max_dd": -8.98,
+      "profit_factor": 1.379,
+      "win_rate": 0.499,
+      "avg_win_pct": 4.92,
+      "avg_loss_pct": 3.66,
+      "total_trades": 2230,
+      "avg_holding": 9.6,
+      "psr": 1.0,
+      "score": 2.693,
+      "passed": 0
+    },
+    "diagnosis": "Sharpe 0.141 < 0.5; CAGR 2.6% < 3.0%",
+    "timestamp": "2026-04-01T15:09:28.818619"
+  },
+  {
+    "iteration": 3,
+    "spec": {
+      "expression": "cs_rank(ts_delta(close, 5) / ts_std(close, 20)) * cs_rank(ts_rank(volume, 20) - ts_rank(volume, 60))",
+      "backtest": {
+        "profit_take_mult": 3.0,
+        "stop_loss_mult": 1.5,
+        "max_holding_days": 20,
+        "n_positions": 20,
+        "rebalance_frequency": "weekly",
+        "position_sizing": "hrp",
+        "use_cusum_gate": false,
+        "use_regime": true,
+        "slippage_bps": 15
+      },
+      "rationale": "Short-term volatility-adjusted momentum multiplied by a volume acceleration signal (recent volume rank vs longer-term rank) captures stocks with rising prices on increasing relative volume \u2014 a classic institutional accumulation pattern. Multiplying two cs_rank signals keeps the combined score bounded and cross-sectionally normalized."
+    },
+    "score": {
+      "sharpe": 0.381,
+      "cagr": 4.33,
+      "max_dd": -8.13,
+      "profit_factor": 1.384,
+      "win_rate": 0.48,
+      "avg_win_pct": 5.83,
+      "avg_loss_pct": 3.78,
+      "total_trades": 3437,
+      "avg_holding": 10.8,
+      "psr": 1.0,
+      "score": 3.738,
+      "passed": 0
+    },
+    "diagnosis": "Sharpe 0.381 < 0.5",
+    "timestamp": "2026-04-01T15:09:42.479442"
+  },
+  {
+    "iteration": 4,
+    "spec": {
+      "expression": "cs_rank(ts_delta(close, 5) / ts_std(close, 20)) + cs_rank(ts_delta(close, 21) / ts_std(close, 63)) - cs_rank(ts_delta(volume, 5) / ts_mean(volume, 20))",
+      "backtest": {
+        "profit_take_mult": 3.0,
+        "stop_loss_mult": 1.5,
+        "max_holding_days": 30,
+        "n_positions": 20,
+        "rebalance_frequency": "weekly",
+        "position_sizing": "hrp",
+        "use_cusum_gate": true,
+        "use_regime": true,
+        "slippage_bps": 15
+      },
+      "rationale": "Combines short-term and medium-term volatility-adjusted momentum (additive, multi-scale) while penalizing stocks with abnormal recent volume spikes \u2014 the latter often precedes mean-reversion rather than continuation. Regime filter and CUSUM gate reduce drawdown during adverse market conditions."
+    },
+    "score": {
+      "sharpe": 0.115,
+      "cagr": 2.53,
+      "max_dd": -7.35,
+      "profit_factor": 1.321,
+      "win_rate": 0.457,
+      "avg_win_pct": 5.93,
+      "avg_loss_pct": 3.64,
+      "total_trades": 2914,
+      "avg_holding": 10.9,
+      "psr": 1.0,
+      "score": 2.41,
+      "passed": 0
+    },
+    "diagnosis": "Sharpe 0.115 < 0.5; CAGR 2.5% < 3.0%",
+    "timestamp": "2026-04-01T15:09:52.636341"
+  },
+  {
+    "iteration": 5,
+    "spec": {
+      "expression": "cs_rank(ts_delta(close, 5) / ts_std(close, 20)) * cs_rank(ts_corr(close, volume, 10))",
+      "backtest": {
+        "profit_take_mult": 3.0,
+        "stop_loss_mult": 1.5,
+        "max_holding_days": 30,
+        "n_positions": 20,
+        "rebalance_frequency": "weekly",
+        "position_sizing": "hrp",
+        "use_cusum_gate": true,
+        "use_regime": true,
+        "slippage_bps": 15
+      },
+      "rationale": "Combines short-term volatility-adjusted momentum with the price-volume correlation signal: stocks with strong recent price moves AND high price-volume correlation (institutional participation) should have more durable trends. Regime filter and CUSUM gate reduce drawdown during adverse market conditions."
+    },
+    "score": {
+      "sharpe": 0.274,
+      "cagr": 3.68,
+      "max_dd": -9.12,
+      "profit_factor": 1.336,
+      "win_rate": 0.46,
+      "avg_win_pct": 6.39,
+      "avg_loss_pct": 3.91,
+      "total_trades": 3293,
+      "avg_holding": 11.5,
+      "psr": 1.0,
+      "score": 3.148,
+      "passed": 0
+    },
+    "diagnosis": "Sharpe 0.274 < 0.5",
+    "timestamp": "2026-04-01T15:10:03.264657"
+  }
+];
+
+// ── Summary cards ──
+const bestIdx = DATA.reduce((best, e, i) => (e.score?.score || -999) > (DATA[best]?.score?.score || -999) ? i : best, 0);
+const best = DATA[bestIdx];
+const summaryHTML = `
+  <div class="card">
+    <h2>Best Iteration (#${best.iteration})</h2>
+    <div class="metric"><span class="metric-label">Expression</span></div>
+    <div class="expr" style="padding: 4px 0 8px">${best.spec.expression}</div>
+    <div class="metric"><span class="metric-label">Sharpe</span><span class="metric-value ${best.score.sharpe > 0.5 ? 'positive' : best.score.sharpe > 0 ? 'neutral' : 'negative'}">${best.score.sharpe.toFixed(3)}</span></div>
+    <div class="metric"><span class="metric-label">CAGR</span><span class="metric-value ${best.score.cagr > 3 ? 'positive' : 'neutral'}">${best.score.cagr.toFixed(1)}%</span></div>
+    <div class="metric"><span class="metric-label">Max DD</span><span class="metric-value">${best.score.max_dd.toFixed(1)}%</span></div>
+    <div class="metric"><span class="metric-label">Composite Score</span><span class="metric-value positive">${best.score.score.toFixed(3)}</span></div>
+  </div>
+  <div class="card">
+    <h2>Run Statistics</h2>
+    <div class="metric"><span class="metric-label">Total Iterations</span><span class="metric-value">${DATA.length}</span></div>
+    <div class="metric"><span class="metric-label">Avg Sharpe</span><span class="metric-value">${(DATA.reduce((s,e) => s + (e.score?.sharpe||0), 0) / DATA.length).toFixed(3)}</span></div>
+    <div class="metric"><span class="metric-label">Avg CAGR</span><span class="metric-value">${(DATA.reduce((s,e) => s + (e.score?.cagr||0), 0) / DATA.length).toFixed(1)}%</span></div>
+    <div class="metric"><span class="metric-label">Best PF</span><span class="metric-value">${Math.max(...DATA.map(e => e.score?.profit_factor||0)).toFixed(2)}</span></div>
+    <div class="metric"><span class="metric-label">Passed PSR Gate</span><span class="metric-value ${DATA.some(e => e.score?.passed) ? 'positive' : 'negative'}">${DATA.filter(e => e.score?.passed).length} / ${DATA.length}</span></div>
+  </div>
+  <div class="card">
+    <h2>Expression Operators Used</h2>
+    ${(() => {
+      const ops = {};
+      DATA.forEach(e => {
+        const expr = e.spec?.expression || '';
+        const matches = expr.match(/\b(ts_\w+|cs_\w+|abs|log|sign)\b/g) || [];
+        matches.forEach(op => ops[op] = (ops[op]||0) + 1);
+      });
+      return Object.entries(ops).sort((a,b) => b[1]-a[1]).map(([op, count]) =>
+        '<div class="metric"><span class="metric-label">' + op + '</span><span class="metric-value">' + count + 'x</span></div>'
+      ).join('');
+    })()}
+  </div>
+`;
+document.getElementById('summary-cards').innerHTML = summaryHTML;
+
+// ── Table ──
+const tbody = document.getElementById('results-body');
+DATA.forEach((e, i) => {
+  const s = e.score || {};
+  const isBest = i === bestIdx;
+  const status = s.passed ? '<span class="badge badge-pass">PASS</span>'
+    : (s.sharpe > 0.3 ? '<span class="badge badge-close">CLOSE</span>' : '<span class="badge badge-fail">FAIL</span>');
+  tbody.innerHTML += `<tr class="${isBest ? 'best-row' : ''}">
+    <td>${e.iteration}</td>
+    <td><div class="expr">${e.spec?.expression||'?'}</div><div class="rationale">${e.spec?.rationale||''}</div></td>
+    <td class="${s.sharpe > 0.5 ? 'positive' : s.sharpe > 0 ? 'neutral' : 'negative'}">${(s.sharpe||0).toFixed(3)}</td>
+    <td class="${s.cagr > 3 ? 'positive' : 'neutral'}">${(s.cagr||0).toFixed(1)}</td>
+    <td>${(s.max_dd||0).toFixed(1)}</td>
+    <td>${((s.win_rate||0)*100).toFixed(0)}%</td>
+    <td>${(s.profit_factor||0).toFixed(2)}</td>
+    <td>${s.total_trades||0}</td>
+    <td>${(s.avg_holding||0).toFixed(1)}d</td>
+    <td class="${(s.score||0) > 3 ? 'positive' : ''}">${(s.score||0).toFixed(3)}</td>
+    <td>${status}</td>
+  </tr>`;
+});
+
+// ── Table sorting ──
+document.querySelectorAll('th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const dir = th.classList.toggle('asc') ? 1 : -1;
+    rows.sort((a, b) => {
+      const ai = Array.from(a.children);
+      const bi = Array.from(b.children);
+      const idx = Array.from(th.parentElement.children).indexOf(th);
+      const av = parseFloat(ai[idx].textContent) || 0;
+      const bv = parseFloat(bi[idx].textContent) || 0;
+      return (av - bv) * dir;
+    });
+    rows.forEach(r => tbody.appendChild(r));
+  });
+});
+
+// ── Charts ──
+const labels = DATA.map(e => 'Iter ' + e.iteration);
+const chartOpts = (title) => ({
+  responsive: true, maintainAspectRatio: false,
+  plugins: { legend: { display: false }, title: { display: true, text: title, color: '#c9d1d9' } },
+  scales: {
+    x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+    y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+  }
+});
+
+new Chart(document.getElementById('chart-sharpe'), {
+  type: 'bar', data: { labels,
+    datasets: [{ data: DATA.map(e => e.score?.sharpe || 0),
+      backgroundColor: DATA.map(e => (e.score?.sharpe||0) > 0 ? 'rgba(63,185,80,0.6)' : 'rgba(248,81,73,0.6)'),
+      borderRadius: 4 }]
+  }, options: chartOpts('Sharpe Ratio')
+});
+new Chart(document.getElementById('chart-cagr'), {
+  type: 'bar', data: { labels,
+    datasets: [{ data: DATA.map(e => e.score?.cagr || 0),
+      backgroundColor: DATA.map(e => (e.score?.cagr||0) > 3 ? 'rgba(63,185,80,0.6)' : 'rgba(210,153,34,0.6)'),
+      borderRadius: 4 }]
+  }, options: chartOpts('CAGR %')
+});
+new Chart(document.getElementById('chart-trades'), {
+  type: 'bar', data: { labels,
+    datasets: [{ data: DATA.map(e => e.score?.total_trades || 0),
+      backgroundColor: 'rgba(88,166,255,0.5)', borderRadius: 4 }]
+  }, options: chartOpts('Total Trades')
+});
+new Chart(document.getElementById('chart-score'), {
+  type: 'line', data: { labels,
+    datasets: [{ data: DATA.map(e => e.score?.score || 0),
+      borderColor: '#bc8cff', backgroundColor: 'rgba(188,140,255,0.1)',
+      fill: true, tension: 0.3, pointRadius: 6, pointBackgroundColor: '#bc8cff' }]
+  }, options: chartOpts('Composite Score (higher = better)')
+});
+
+// ── Detail cards per iteration ──
+const detailHTML = DATA.map(e => {
+  const s = e.score || {};
+  return `<div class="card" style="margin-bottom: 16px">
+    <h2>Iteration ${e.iteration} — Detail</h2>
+    <div class="expr" style="margin: 8px 0">${e.spec?.expression||''}</div>
+    <div class="rationale" style="margin-bottom: 8px">${e.spec?.rationale||''}</div>
+    <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px">
+      <div class="metric" style="flex-direction:column"><span class="metric-label">Sharpe</span><span class="metric-value" style="font-size:1.2rem">${(s.sharpe||0).toFixed(3)}</span></div>
+      <div class="metric" style="flex-direction:column"><span class="metric-label">CAGR</span><span class="metric-value" style="font-size:1.2rem">${(s.cagr||0).toFixed(1)}%</span></div>
+      <div class="metric" style="flex-direction:column"><span class="metric-label">Max DD</span><span class="metric-value" style="font-size:1.2rem">${(s.max_dd||0).toFixed(1)}%</span></div>
+      <div class="metric" style="flex-direction:column"><span class="metric-label">Win Rate</span><span class="metric-value" style="font-size:1.2rem">${((s.win_rate||0)*100).toFixed(0)}%</span></div>
+      <div class="metric" style="flex-direction:column"><span class="metric-label">Avg Win</span><span class="metric-value positive" style="font-size:1.2rem">+${(s.avg_win_pct||0).toFixed(1)}%</span></div>
+      <div class="metric" style="flex-direction:column"><span class="metric-label">Avg Loss</span><span class="metric-value negative" style="font-size:1.2rem">-${(s.avg_loss_pct||0).toFixed(1)}%</span></div>
+      <div class="metric" style="flex-direction:column"><span class="metric-label">PF</span><span class="metric-value" style="font-size:1.2rem">${(s.profit_factor||0).toFixed(2)}</span></div>
+      <div class="metric" style="flex-direction:column"><span class="metric-label">Trades</span><span class="metric-value" style="font-size:1.2rem">${s.total_trades||0}</span></div>
+    </div>
+    <div class="diag" style="margin-top: 8px">Diagnosis: ${e.diagnosis}</div>
+  </div>`;
+}).join('');
+document.getElementById('detail-cards').innerHTML = detailHTML;
+</script>
+</body>
+</html>
