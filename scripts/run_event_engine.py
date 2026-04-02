@@ -104,8 +104,14 @@ def load_price_dataframes(
             continue
 
         df = pd.read_parquet(path)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date").sort_index()
+        # date may be the index (when saved with index=True) or a column
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date").sort_index()
+        else:
+            df.index = pd.to_datetime(df.index)
+            df.index.name = "date"
+            df = df.sort_index()
 
         if price_col in df.columns:
             close_frames[symbol] = df[price_col]
@@ -122,6 +128,44 @@ def load_price_dataframes(
         f"Loaded {len(close_frames)} symbols, " f"{len(close_prices)} trading days"
     )
     return close_prices, open_prices
+
+
+def load_ohlcv_dataframes(symbols: list[str]) -> dict[str, pd.DataFrame]:
+    """Load full OHLCV into a dict of wide DataFrames.
+
+    Returns:
+        {"open": DataFrame, "high": DataFrame, "low": DataFrame,
+         "close": DataFrame, "volume": DataFrame}
+        Each DataFrame has shape (n_trading_days, n_symbols).
+        Uses adj_close for the "close" key.
+    """
+    prices_dir = PARQUET_DIR / "prices"
+    frames: dict[str, dict[str, pd.Series]] = {
+        col: {} for col in ("open", "high", "low", "close", "volume")
+    }
+    col_map = {"adj_close": "close", "open": "open", "high": "high", "low": "low", "volume": "volume"}
+
+    for symbol in symbols:
+        path = prices_dir / f"{symbol}.parquet"
+        if not path.exists():
+            continue
+        df = pd.read_parquet(path)
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date").sort_index()
+        else:
+            df.index = pd.to_datetime(df.index)
+            df = df.sort_index()
+
+        for src_col, dest_col in col_map.items():
+            if src_col in df.columns:
+                frames[dest_col][symbol] = df[src_col]
+
+    result = {col: pd.DataFrame(series_dict) for col, series_dict in frames.items()}
+    n_symbols = len(result.get("close", pd.DataFrame()).columns)
+    n_days = len(result.get("close", pd.DataFrame()))
+    logger.info(f"OHLCV loaded: {n_symbols} symbols, {n_days} trading days")
+    return result
 
 
 def build_equity_df(result) -> pd.DataFrame:

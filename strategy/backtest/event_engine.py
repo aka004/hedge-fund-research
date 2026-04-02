@@ -6,6 +6,8 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from afml.bet_sizing import kelly_criterion
+from afml.portfolio import hrp
 from afml.regime_composite import compute_regime_multiplier
 from strategy.backtest.exit_manager import ExitConfig, ExitManager, ExitSignal
 from strategy.backtest.portfolio import RoundTripTrade, TransactionCosts
@@ -22,7 +24,7 @@ class EventEngineConfig:
     max_positions: int = 20
     max_position_weight: float = 0.10  # 10% cap
     rebalance_frequency: str = "monthly"
-    position_sizing: str = "equal"  # "equal" | "signal_weighted"
+    position_sizing: str = "equal"  # "equal" | "signal_weighted" | "kelly" | "hrp"
     transaction_costs: TransactionCosts = field(default_factory=TransactionCosts)
     exit_config: ExitConfig = field(default_factory=ExitConfig)
     benchmark_symbol: str = "SPY"
@@ -324,8 +326,10 @@ class EventDrivenEngine:
         )
         current_equity = cash + position_value
 
-        # Calculate weights
-        weights = self._calculate_weights(new_symbols)
+        # Calculate weights (Kelly uses completed_trades history; HRP uses close_prices)
+        weights = self._calculate_weights(
+            new_symbols, completed_trades, close_prices=close_prices, as_of_date=today
+        )
 
         for symbol, weight in weights.items():
             if symbol not in today_open:
@@ -587,22 +591,112 @@ class EventDrivenEngine:
             return 0.5
         return prob
 
+    def _kelly_fraction(self, completed_trades: list, lookback: int = 100) -> float:
+        """Compute half-Kelly portfolio fraction from recent completed trades.
+
+        Uses afml.kelly_criterion (AFML Chapter 10) for the calculation.
+        Returns a fraction in [0.10, 1.0] — the proportion of equity to deploy.
+        """
+        recent = [t for t in completed_trades[-lookback:] if t.exit_price and t.entry_price > 0]
+        if len(recent) < 20:
+            return 0.5  # not enough history — deploy 50% of target weight
+
+        pnl_pcts = [(t.exit_price - t.entry_price) / t.entry_price for t in recent]
+        wins = [p for p in pnl_pcts if p > 0]
+        losses = [abs(p) for p in pnl_pcts if p < 0]
+
+        if not wins or not losses:
+            return 0.5
+
+        prob_win = len(wins) / len(pnl_pcts)
+        avg_win = sum(wins) / len(wins)
+        avg_loss = sum(losses) / len(losses)
+        odds = avg_win / avg_loss  # win/loss ratio (b)
+
+        result = kelly_criterion(prob_win=prob_win, odds=odds)
+        # half-Kelly clamped to [0.10, 1.0]
+        return max(0.10, min(1.0, result.half_kelly))
+
     def _calculate_weights(
         self,
         signals: list,
+        completed_trades: list | None = None,
+        close_prices: pd.DataFrame | None = None,
+        as_of_date: date | None = None,
     ) -> dict[str, float]:
-        """Calculate target weights from signals."""
+        """Calculate target weights from signals.
+
+        Sizing modes:
+          equal           — 1/N equal weight (baseline)
+          signal_weighted — proportional to momentum score
+          kelly           — signal-weighted, then scaled by afml half-Kelly fraction
+          hrp             — Hierarchical Risk Parity (AFML Chapter 16); uses 60-day
+                            return covariance to allocate less to correlated clusters
+        """
         if not signals:
             return {}
+
+        n = len(signals)
 
         if self.config.position_sizing == "signal_weighted":
             total_score = sum(max(0, s.score) for s in signals)
             if total_score > 0:
                 return {s.symbol: max(0, s.score) / total_score for s in signals}
+            return {s.symbol: 1.0 / n for s in signals}
+
+        if self.config.position_sizing == "kelly":
+            # Base: signal-proportional (higher momentum signal → larger slice)
+            total_score = sum(max(0, s.score) for s in signals)
+            if total_score > 0:
+                base = {s.symbol: max(0, s.score) / total_score for s in signals}
+            else:
+                base = {s.symbol: 1.0 / n for s in signals}
+
+            # Scale the whole portfolio allocation by half-Kelly fraction
+            kf = self._kelly_fraction(completed_trades or [])
+            return {sym: w * kf for sym, w in base.items()}
+
+        if self.config.position_sizing == "hrp":
+            # Hierarchical Risk Parity: use 60-day return covariance to weight
+            # assets, allocating less to correlated clusters.
+            if close_prices is not None and as_of_date is not None:
+                syms = [s.symbol for s in signals if s.symbol in close_prices.columns]
+                if len(syms) >= 2:
+                    # Locate as_of_date row in the DatetimeIndex
+                    idx = close_prices.index
+                    if not isinstance(idx, pd.DatetimeIndex):
+                        idx = pd.to_datetime(idx)
+                        close_prices = close_prices.copy()
+                        close_prices.index = idx
+
+                    as_of_ts = pd.Timestamp(as_of_date)
+                    pos = idx.get_indexer([as_of_ts], method="pad")[0]
+                    start = max(0, pos - 59)  # 60-day window
+                    price_slice = close_prices.iloc[start : pos + 1][syms]
+                    # Log returns for HRP covariance: more symmetric, additive over
+                    # time, less skewed by large moves (e.g. NVDA +300% outliers).
+                    # P&L accounting elsewhere stays on simple returns.
+                    import numpy as np
+                    returns = np.log(price_slice / price_slice.shift(1)).dropna()
+                    # Drop columns with any NaN (symbol missing data in window)
+                    returns = returns.dropna(axis=1, how="any")
+
+                    if len(returns) >= 20 and len(returns.columns) >= 2:
+                        try:
+                            hrp_result = hrp(returns)
+                            # Re-align to the full signal list (missing = 0)
+                            weights = {s.symbol: float(hrp_result.weights.get(s.symbol, 0.0)) for s in signals}
+                            total = sum(weights.values())
+                            if total > 0:
+                                return {sym: w / total for sym, w in weights.items()}
+                        except Exception as e:
+                            logger.debug("HRP failed, falling back to equal weight: %s", e)
+
+            # Fallback: equal weight if HRP can't run
+            return {s.symbol: 1.0 / n for s in signals}
 
         # Default: equal weight
-        weight = 1.0 / len(signals)
-        return {s.symbol: weight for s in signals}
+        return {s.symbol: 1.0 / n for s in signals}
 
     def _get_rebalance_dates(self, trading_days: list[date]) -> set[date]:
         """Determine which trading days are rebalance days."""
