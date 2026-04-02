@@ -95,18 +95,30 @@ on a stock×time matrix and backtested. You receive performance feedback and ite
   These update quarterly so ts_* operators with windows < 60 days won't vary much.
 
 **Time-series operators** (per stock, rolling window d in [1, 252]):
-  ts_mean(x, d)    — rolling mean
-  ts_std(x, d)     — rolling std
-  ts_sum(x, d)     — rolling sum
-  ts_max(x, d)     — rolling max
-  ts_min(x, d)     — rolling min
-  ts_rank(x, d)    — percentile rank within last d days (0 to 1)
-  ts_corr(x, y, d) — rolling correlation between two series
-  ts_delta(x, d)   — x[t] - x[t-d]  (alias: delta)
+  ts_mean(x, d) / sma(x, d) — simple moving average (SMA)
+  ts_ema(x, d) / ema(x, d)  — exponential moving average (EMA, span=d)
+  ts_decay(x, d)    — linearly decaying weighted average (recent data gets more weight)
+  ts_std(x, d)      — rolling standard deviation
+  ts_sum(x, d)      — rolling sum
+  ts_max(x, d)      — rolling max
+  ts_min(x, d)      — rolling min
+  ts_rank(x, d)     — percentile rank within last d days (0 to 1)
+  ts_delta(x, d)    — x[t] - x[t-d]  (alias: delta)
+  ts_returns(x, d)  — simple returns: x[t]/x[t-d] - 1
+  ts_skew(x, d)     — rolling skewness (positive = right tail)
+  ts_kurt(x, d)     — rolling kurtosis (high = fat tails)
+  ts_zscore(x, d)   — time-series z-score: (x - mean_d) / std_d
+  ts_argmax(x, d)   — days since d-day high (0 = at high today)
+  ts_argmin(x, d)   — days since d-day low (0 = at low today)
+  ts_prod(x, d)     — rolling product (compound returns)
+  ts_corr(x, y, d)  — rolling correlation between two series
+  ts_cov(x, y, d)   — rolling covariance between two series
+  ts_vwap(price, volume, d) / vwap(price, volume, d) — volume-weighted avg price
 
 **Cross-sectional operators** (across all stocks, per day):
   cs_rank(x)    — percentile rank across stocks (0 to 1)
   cs_zscore(x)  — z-score across stocks
+  cs_demean(x)  — subtract cross-sectional mean (market-neutral)
 
 **Element-wise**:
   abs(x), log(x), sign(x)
@@ -159,6 +171,14 @@ on a stock×time matrix and backtested. You receive performance feedback and ite
 - cs_rank(revenue_growth) * cs_rank(momentum) = growth-momentum combo
 - Fundamentals change quarterly — use cs_rank() not ts_* for fundamentals
 - Combining momentum with earnings_yield reduces momentum crash risk
+- vwap(close, volume, 20) gives institutional fair-value reference
+- close / vwap(close, volume, 20) - 1 = price vs VWAP deviation
+- ts_ema(x, d) reacts faster to changes than ts_mean(x, d) (SMA)
+- ts_argmax(close, 252) = days since 52-week high (momentum timing)
+- ts_argmin(close, 252) = days since 52-week low (reversion timing)
+- ts_skew(returns, 63) detects crash-prone vs lottery-ticket stocks
+- ts_zscore(close, 63) = how extreme is today vs recent history
+- cs_demean() removes market-level effects without ranking
 """).strip()
 
 
@@ -490,7 +510,7 @@ def run_alpha_gpt(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="AlphaGPT: expression-based factor discovery")
-    ap.add_argument("--universe", default=None, help="Universe file (one ticker/line)")
+    ap.add_argument("--universe", default=None, help="Universe file (one ticker/line) or 'all' for full parquet universe")
     ap.add_argument("--start", default="2015-01-01")
     ap.add_argument("--end", default="2024-12-31")
     ap.add_argument("--max-iter", type=int, default=20)
@@ -500,7 +520,11 @@ def main() -> None:
     args = ap.parse_args()
 
     # ── Universe ──────────────────────────────────────────────────────────────
-    if args.universe:
+    if args.universe == "all":
+        prices_dir = PARQUET_DIR / "prices"
+        universe = sorted([p.stem for p in prices_dir.glob("*.parquet") if p.stem != "SPY"])
+        logger.info(f"Using full parquet universe: {len(universe)} symbols")
+    elif args.universe:
         universe = [t.strip() for t in Path(args.universe).read_text().splitlines() if t.strip()]
     else:
         universe = [
