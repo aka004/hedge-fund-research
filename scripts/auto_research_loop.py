@@ -43,6 +43,7 @@ except ImportError:
 from config import STORAGE_PATH
 from data.storage.duckdb_store import DuckDBStore
 from data.storage.parquet import ParquetStorage
+import scripts.alpha_gpt as agpt
 from scripts.alpha_gpt import (
     HISTORY_PATH,
     PSR_TARGET,
@@ -671,13 +672,11 @@ def main() -> None:
         # We do this by temporarily patching alpha_gpt's SYSTEM_PROMPT
         hint = config.get("prompt_hint")
         if hint and hint in DIVERSITY_HINTS:
-            import scripts.alpha_gpt as agpt
             agpt.SYSTEM_PROMPT = agpt.SYSTEM_PROMPT.rstrip() + DIVERSITY_HINTS[hint]
             logger.info(f"Injected prompt hint: {hint}")
         elif hint == "custom":
             custom_text = config.get("hint_text", "")
             if custom_text:
-                import scripts.alpha_gpt as agpt
                 agpt.SYSTEM_PROMPT = agpt.SYSTEM_PROMPT.rstrip() + "\n\nIMPORTANT: " + custom_text
                 logger.info(f"Injected custom meta-agent hint: {custom_text[:80]}")
 
@@ -705,7 +704,9 @@ def main() -> None:
         if pending:
             history_now = load_history()
             if not pending.get("is_history_clear"):
-                post_median = _get_batch_median_score(history_now, args.batch_size)
+                actual_post_batch = total_spent - pending.get("shift_applied_at", total_spent)
+                post_window = min(actual_post_batch, args.batch_size) if actual_post_batch > 0 else args.batch_size
+                post_median = _get_batch_median_score(history_now, post_window)
                 pre_median = pending["pre_median"]
                 kept = (
                     post_median is not None
@@ -717,7 +718,6 @@ def main() -> None:
                         f"Post-shift median ({post_median}) <= pre-shift ({pre_median})"
                         " — reverting SYSTEM_PROMPT"
                     )
-                    import scripts.alpha_gpt as agpt
                     agpt.SYSTEM_PROMPT = pending["snapshot"]
                 else:
                     logger.info(
@@ -727,7 +727,6 @@ def main() -> None:
                 # For kept prompt_hint shifts: write SYSTEM_PROMPT to disk and commit
                 commit_hash = "none"
                 if kept and pending["shift_type"] == "prompt_hint":
-                    import scripts.alpha_gpt as agpt
                     commit_hash = _write_system_prompt_to_disk(
                         agpt.SYSTEM_PROMPT, rationale=pending["rationale"]
                     ) or "none"
@@ -773,7 +772,6 @@ def main() -> None:
                 logger.info(f"Applying: {changes}")
 
                 # --- Snapshot before applying: for keep/revert comparison ---
-                import scripts.alpha_gpt as agpt
                 _shift_snapshot = agpt.SYSTEM_PROMPT
                 _pre_median = _get_batch_median_score(history, args.batch_size)
                 _is_history_clear = bool(changes.get("clear_history"))
@@ -800,7 +798,6 @@ def main() -> None:
                     total_spent = 0
 
                 if changes.get("force_monthly"):
-                    import scripts.alpha_gpt as agpt
                     # Patch spec_to_run_params to enforce monthly rebalance
                     _orig_spec_to_run = agpt.spec_to_run_params
                     def _forced_monthly_params(spec, iteration, _orig=_orig_spec_to_run):
@@ -821,6 +818,7 @@ def main() -> None:
                     "shift_type": _shift_type,
                     "rationale": _shift_rationale,
                     "is_history_clear": _is_history_clear,
+                    "shift_applied_at": total_spent,
                 }
             else:
                 logger.info("Shift rejected — continuing with current config")
