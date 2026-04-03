@@ -48,7 +48,7 @@ class EventEngineResult:
     daily_returns: pd.Series
     benchmark_returns: pd.Series
     open_positions: list[RoundTripTrade]
-    engine_stats: dict = field(default_factory=dict)  # NEW: CUSUM/meta trace data
+    engine_stats: dict = field(default_factory=dict)  # CUSUM/meta trace data for AutoAgent analysis
 
 
 class EventDrivenEngine:
@@ -349,7 +349,7 @@ class EventDrivenEngine:
             new_symbols, completed_trades, close_prices=close_prices, as_of_date=today
         )
 
-        # --- NEW: track CUSUM and meta stats for this rebalance ---
+        # Trace stats: CUSUM gate pass rate and meta-label probabilities
         _reb_cusum_total = 0
         _reb_cusum_passed = 0
         _reb_meta_probs: list[float] = []
@@ -361,12 +361,10 @@ class EventDrivenEngine:
                 break
 
             # CUSUM entry gate: skip if no recent upside fire
-            # NEW: count all candidates, then count passes
-            _reb_cusum_total += 1
+            _reb_cusum_total += 1  # Count all CUSUM gate candidates
             if self.config.use_cusum_gate and upside_cusum is not None:
                 if symbol not in upside_cusum:
                     continue
-            _reb_cusum_passed += 1
 
             # Meta-label P(win) — scales position size
             meta_prob = (
@@ -374,7 +372,6 @@ class EventDrivenEngine:
                 if self.config.use_meta_labeling and close_prices is not None
                 else 0.5
             )
-            _reb_meta_probs.append(meta_prob)   # NEW: collect prob
 
             # Cap at max_position_weight, then apply regime_mult and meta_prob
             capped_weight = min(weight, self.config.max_position_weight)
@@ -406,6 +403,8 @@ class EventDrivenEngine:
                 total_cost = shares * price + commission + slippage
 
             cash -= total_cost
+            _reb_cusum_passed += 1  # Count only symbols that actually entered
+            _reb_meta_probs.append(meta_prob)  # Collect entry P(win) for trace analysis
             positions[symbol] = RoundTripTrade(
                 symbol=symbol,
                 entry_date=today,
@@ -790,7 +789,7 @@ class EventDrivenEngine:
             daily_returns=pd.Series(dtype=float),
             benchmark_returns=pd.Series(dtype=float),
             open_positions=[],
-            engine_stats={},   # NEW
+            engine_stats={},
         )
 
     def _build_result(
@@ -801,7 +800,7 @@ class EventDrivenEngine:
         completed_trades: list[RoundTripTrade],
         open_positions: dict[str, RoundTripTrade],
         bench_start_price: float | None,
-        engine_stats: dict | None = None,   # NEW
+        engine_stats: dict | None = None,
     ) -> EventEngineResult:
         """Assemble the final EventEngineResult."""
         # Equity curve
@@ -846,5 +845,5 @@ class EventDrivenEngine:
             daily_returns=daily_returns,
             benchmark_returns=benchmark_returns,
             open_positions=list(open_positions.values()),
-            engine_stats=engine_stats or {},   # NEW
+            engine_stats=engine_stats or {},
         )
