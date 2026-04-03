@@ -786,3 +786,14 @@ def test_meta_label_fallback_with_insufficient_data():
     engine = EventDrivenEngine(combiner, config)
     result = engine.run(universe, close_df, open_df)
     assert result.equity_curve is not None
+
+
+def test_meta_label_clf_uses_single_job():
+    """RandomForestClassifier must use n_jobs=1 so parallel workers don't fight for CPUs."""
+    import inspect
+    from strategy.backtest.event_engine import EventDrivenEngine
+    src = inspect.getsource(EventDrivenEngine._train_meta_label)
+    assert "n_jobs=1" in src, (
+        "_train_meta_label must use n_jobs=1 — n_jobs=-1 causes CPU contention "
+        "when multiple worker processes run backtests simultaneously"
+    )

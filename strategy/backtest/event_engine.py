@@ -564,7 +564,7 @@ class EventDrivenEngine:
         X = X.reset_index(drop=True)
         y = y.reset_index(drop=True)
 
-        clf = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+        clf = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=1)
         try:
             clf.fit(X, y)
         except Exception:
