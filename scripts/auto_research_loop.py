@@ -14,9 +14,15 @@ Usage:
 import argparse
 import json
 import logging
+import os
+import statistics
+import subprocess
 import sys
-from datetime import date
+import tempfile
+from datetime import date, datetime
 from pathlib import Path
+
+import anthropic
 
 import pandas as pd
 
@@ -37,6 +43,7 @@ except ImportError:
 from config import STORAGE_PATH
 from data.storage.duckdb_store import DuckDBStore
 from data.storage.parquet import ParquetStorage
+import scripts.alpha_gpt as agpt
 from scripts.alpha_gpt import (
     HISTORY_PATH,
     PSR_TARGET,
@@ -59,6 +66,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 PARQUET_DIR = STORAGE_PATH / "parquet"
+RESULTS_TSV_PATH = Path(__file__).parent.parent / "data" / "cache" / "results.tsv"
 
 
 # ── Batch analysis (pure Python, no LLM) ─────────────────────────────────────
@@ -190,7 +198,7 @@ def analyze_batch(history: list[dict]) -> dict:
     }
 
 
-def propose_strategy_shift(analysis: dict, current_config: dict) -> dict | None:
+def _propose_strategy_shift_rules(analysis: dict, current_config: dict) -> dict | None:
     """Based on analysis, propose a config change that needs human approval.
 
     Returns None if no shift needed (just keep iterating).
@@ -246,6 +254,156 @@ def propose_strategy_shift(analysis: dict, current_config: dict) -> dict | None:
         }
 
     return None
+
+
+_META_AGENT_SYSTEM_PROMPT = (
+    "You are a research director reviewing alpha expression discovery attempts.\n"
+    "You receive batch history with expressions tried, scores, and execution traces.\n"
+    "Your job: identify the root cause of stagnation and propose ONE concrete strategy change.\n\n"
+    "Respond ONLY with valid JSON:\n"
+    "{\n"
+    '  "type": "prompt_hint" | "universe_expand" | "rebalance_frequency" | "history_clear" | "no_action",\n'
+    '  "rationale": "1-3 sentences explaining the root cause",\n'
+    '  "change": {\n'
+    "    // For prompt_hint: {\"hint\": \"focus on mean-reversion using ts_zscore operators\"}\n"
+    "    // For universe_expand: {\"target_symbols\": 600}\n"
+    "    // For rebalance_frequency: {\"frequency\": \"monthly\"}\n"
+    "    // For history_clear: {}\n"
+    "    // For no_action: {}\n"
+    "  }\n"
+    "}"
+)
+
+
+def _build_meta_agent_message(history: list[dict], program_md_path: Path, n_batch: int) -> str:
+    """Build the user message for the meta-agent from recent batch history."""
+    program_content = ""
+    if program_md_path.exists():
+        try:
+            program_content = program_md_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
+    lines = []
+    if program_content:
+        lines.append("## Current Research Program\n" + program_content + "\n")
+
+    lines.append(f"## Last {n_batch} Iterations\n")
+    for entry in history[-n_batch:]:
+        i = entry.get("iteration", "?")
+        expr = entry.get("spec", {}).get("expression", "?")
+        score = entry.get("score", {})
+        diag = entry.get("diagnosis", "")
+        trace = entry.get("trace") or {}
+
+        lines.append(f"Iter {i}: {expr}")
+        if score:
+            lines.append(
+                f"  Sharpe={score.get('sharpe', 0):.3f} CAGR={score.get('cagr', 0):.1f}% "
+                f"PSR={score.get('psr', 0):.3f} Trades={score.get('total_trades', 0)}"
+            )
+        lines.append(
+            f"  cusum_entry_rate={trace.get('cusum_entry_rate')} "
+            f"meta_prob={trace.get('meta_label_mean_prob')} "
+            f"cost_drag={trace.get('cost_drag_pct')} "
+            f"exits={trace.get('exit_reason_breakdown')}"
+        )
+        if diag:
+            lines.append(f"  Diagnosis: {diag}")
+
+    lines.append("\nAnalyze the pattern of failures and propose ONE concrete strategy change.")
+    return "\n".join(lines)
+
+
+def propose_strategy_shift(analysis: dict, current_config: dict) -> dict | None:
+    """Call Claude meta-agent to propose a strategy shift. Falls back to rule-based on error.
+
+    Returns None for no_action or if no issues detected.
+    Returns a proposal dict compatible with ask_approval() and the apply logic below it.
+    """
+    issues = analysis.get("issues", [])
+    if not issues:
+        return None
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.warning("No ANTHROPIC_API_KEY — using rule-based strategy shift")
+        return _propose_strategy_shift_rules(analysis, current_config)
+
+    history = load_history()
+    batch_size = current_config.get("batch_size", 10)
+    program_md_path = Path(__file__).parent / "program.md"
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        user_msg = _build_meta_agent_message(history, program_md_path, n_batch=batch_size)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            temperature=0.3,
+            system=_META_AGENT_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        raw = response.content[0].text.strip()
+        logger.info(f"Meta-agent response: {raw[:300]}")
+
+        # Parse JSON — handle markdown code fences
+        text = raw
+        if "```" in text:
+            start = text.find("{", text.find("```"))
+            end = text.rfind("}") + 1
+            if start >= 0 and end > start:
+                text = text[start:end]
+        proposal_json = json.loads(text)
+
+        if "type" not in proposal_json or "rationale" not in proposal_json:
+            raise ValueError(f"Meta-agent response missing required fields: {proposal_json}")
+
+        shift_type = proposal_json["type"]
+        change = proposal_json.get("change", {})
+        rationale = proposal_json["rationale"]
+
+        if shift_type == "no_action":
+            logger.info(f"Meta-agent: no action needed — {rationale}")
+            return None
+
+        # Convert meta-agent JSON → internal proposal format (same shape as _propose_strategy_shift_rules)
+        if shift_type == "prompt_hint":
+            hint_text = change.get("hint", "Try different operator combinations")
+            return {
+                "type": "prompt_hint",
+                "description": f"Meta-agent: {rationale}\nHint: {hint_text}",
+                "config_changes": {"prompt_hint": "custom", "hint_text": hint_text},
+                "meta_rationale": rationale,
+            }
+        if shift_type == "universe_expand":
+            return {
+                "type": "expand_universe",
+                "description": f"Meta-agent: {rationale}\nProposal: Expand universe.",
+                "config_changes": {"universe": "all"},
+                "meta_rationale": rationale,
+            }
+        if shift_type == "rebalance_frequency":
+            freq = change.get("frequency", "monthly")
+            return {
+                "type": "reduce_turnover",
+                "description": f"Meta-agent: {rationale}\nProposal: Switch to {freq} rebalance.",
+                "config_changes": {"force_monthly": freq == "monthly"},
+                "meta_rationale": rationale,
+            }
+        if shift_type == "history_clear":
+            return {
+                "type": "reset_direction",
+                "description": f"Meta-agent: {rationale}\nProposal: Clear history.",
+                "config_changes": {"clear_history": True},
+                "meta_rationale": rationale,
+            }
+
+        raise ValueError(f"Unknown shift type from meta-agent: {shift_type}")
+
+    except Exception as e:
+        logger.warning(f"Meta-agent call failed ({e}) — falling back to rule-based shift")
+        return _propose_strategy_shift_rules(analysis, current_config)
 
 
 # ── Prompt hint injection ─────────────────────────────────────────────────────
@@ -309,6 +467,113 @@ def print_batch_summary(analysis: dict, batch_num: int) -> None:
         print("\nDiagnostics:")
         for r in analysis["recommendations"]:
             print(f"  - {r}")
+
+
+# ── Keep/revert helpers ───────────────────────────────────────────────────────
+
+
+def _get_batch_median_score(history: list[dict], last_n: int) -> float | None:
+    """Compute median composite score from the last N scored iterations."""
+    scored = [
+        e["score"]["score"]
+        for e in history[-last_n:]
+        if e.get("score") and e["score"].get("score") is not None
+    ]
+    if not scored:
+        return None
+    return statistics.median(scored)
+
+
+def _append_results_tsv(
+    shift_type: str,
+    pre_median: float | None,
+    post_median: float | None,
+    kept: bool,
+    rationale: str,
+    commit_hash: str = "none",
+) -> None:
+    """Append one result row to results.tsv, creating with header if needed."""
+    RESULTS_TSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not RESULTS_TSV_PATH.exists() or RESULTS_TSV_PATH.stat().st_size == 0
+    with open(RESULTS_TSV_PATH, "a", encoding="utf-8") as f:
+        if write_header:
+            f.write("timestamp\tshift_type\tpre_median\tpost_median\tkept\trationale\tcommit_hash\n")
+        ts = datetime.now().isoformat(timespec="seconds")
+        pre_str = f"{pre_median:.4f}" if pre_median is not None else "null"
+        post_str = f"{post_median:.4f}" if post_median is not None else "null"
+        rationale_clean = rationale.replace("\t", " ").replace("\n", " ")[:120]
+        f.write(
+            f"{ts}\t{shift_type}\t{pre_str}\t{post_str}\t"
+            f"{'yes' if kept else 'no'}\t{rationale_clean}\t{commit_hash}\n"
+        )
+
+
+def _write_system_prompt_to_disk(new_prompt: str, rationale: str = "") -> str | None:
+    """Atomically rewrite the SYSTEM_PROMPT block in alpha_gpt.py between boundary markers.
+
+    Uses write-to-temp + rename for atomicity. Returns short git commit hash or None.
+    """
+    alpha_gpt_path = Path(__file__).parent / "alpha_gpt.py"
+    try:
+        original = alpha_gpt_path.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.error(f"Could not read alpha_gpt.py for SYSTEM_PROMPT update: {e}")
+        return None
+
+    start_marker = "# === META-AGENT EDITABLE BLOCK START ==="
+    end_marker = "# === META-AGENT EDITABLE BLOCK END ==="
+
+    start_idx = original.find(start_marker)
+    end_idx = original.find(end_marker)
+
+    if start_idx == -1 or end_idx == -1:
+        logger.error(
+            "Boundary markers not found in alpha_gpt.py — cannot update SYSTEM_PROMPT on disk"
+        )
+        return None
+
+    # Build replacement block (preserve textwrap.dedent form)
+    new_block = (
+        f"{start_marker}\n"
+        f"SYSTEM_PROMPT = textwrap.dedent(\"\"\"\n"
+        f"{new_prompt}\n"
+        f"\"\"\").strip()\n"
+        f"{end_marker}"
+    )
+
+    updated = original[:start_idx] + new_block + original[end_idx + len(end_marker):]
+
+    # Atomic write: temp file then rename
+    tmp_path = alpha_gpt_path.with_suffix(".py.tmp")
+    try:
+        tmp_path.write_text(updated, encoding="utf-8")
+        tmp_path.rename(alpha_gpt_path)
+        logger.info(f"Updated SYSTEM_PROMPT on disk in {alpha_gpt_path.name}")
+    except Exception as e:
+        logger.error(f"Atomic write failed: {e}")
+        tmp_path.unlink(missing_ok=True)
+        return None
+
+    # Git commit
+    repo_root = alpha_gpt_path.parent.parent
+    rel_path = str(alpha_gpt_path.relative_to(repo_root))
+    commit_msg = f"meta: prompt_hint — {rationale[:60]}"
+    try:
+        subprocess.run(["git", "add", rel_path], cwd=repo_root, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=repo_root, check=True, capture_output=True,
+        )
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo_root, check=True, capture_output=True, text=True,
+        )
+        commit_hash = result.stdout.strip()
+        logger.info(f"Committed SYSTEM_PROMPT update: {commit_hash}")
+        return commit_hash
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Git commit failed: {e.stderr.decode() if e.stderr else e}")
+        return None
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -407,9 +672,13 @@ def main() -> None:
         # We do this by temporarily patching alpha_gpt's SYSTEM_PROMPT
         hint = config.get("prompt_hint")
         if hint and hint in DIVERSITY_HINTS:
-            import scripts.alpha_gpt as agpt
             agpt.SYSTEM_PROMPT = agpt.SYSTEM_PROMPT.rstrip() + DIVERSITY_HINTS[hint]
             logger.info(f"Injected prompt hint: {hint}")
+        elif hint == "custom":
+            custom_text = config.get("hint_text", "")
+            if custom_text:
+                agpt.SYSTEM_PROMPT = agpt.SYSTEM_PROMPT.rstrip() + "\n\nIMPORTANT: " + custom_text
+                logger.info(f"Injected custom meta-agent hint: {custom_text[:80]}")
 
         # ── Run AlphaGPT batch ────────────────────────────────────────────
         winner = run_alpha_gpt(
@@ -429,6 +698,57 @@ def main() -> None:
         )
 
         total_spent = len(load_history())
+
+        # --- Post-shift keep/revert check (runs on batch after a shift was applied) ---
+        pending = config.pop("_pending_revert_check", None)
+        if pending:
+            history_now = load_history()
+            if not pending.get("is_history_clear"):
+                actual_post_batch = total_spent - pending.get("shift_applied_at", total_spent)
+                post_window = min(actual_post_batch, args.batch_size) if actual_post_batch > 0 else args.batch_size
+                post_median = _get_batch_median_score(history_now, post_window)
+                pre_median = pending["pre_median"]
+                kept = (
+                    post_median is not None
+                    and pre_median is not None
+                    and post_median > pre_median
+                )
+                if not kept:
+                    logger.warning(
+                        f"Post-shift median ({post_median}) <= pre-shift ({pre_median})"
+                        " — reverting SYSTEM_PROMPT"
+                    )
+                    agpt.SYSTEM_PROMPT = pending["snapshot"]
+                else:
+                    logger.info(
+                        f"Post-shift median improved ({pre_median:.4f} → {post_median:.4f})"
+                        " — keeping change"
+                    )
+                # For kept prompt_hint shifts: write SYSTEM_PROMPT to disk and commit
+                commit_hash = "none"
+                if kept and pending["shift_type"] == "prompt_hint":
+                    commit_hash = _write_system_prompt_to_disk(
+                        agpt.SYSTEM_PROMPT, rationale=pending["rationale"]
+                    ) or "none"
+
+                _append_results_tsv(
+                    shift_type=pending["shift_type"],
+                    pre_median=pre_median,
+                    post_median=post_median,
+                    kept=kept,
+                    rationale=pending["rationale"],
+                    commit_hash=commit_hash,
+                )
+            else:
+                # history_clear: no baseline to compare — always log as kept
+                logger.info("history_clear shift: no revert possible, logging as kept")
+                _append_results_tsv(
+                    shift_type=pending["shift_type"],
+                    pre_median=pending["pre_median"],
+                    post_median=None,
+                    kept=True,
+                    rationale=pending["rationale"],
+                )
 
         if winner:
             print(f"\n{'='*60}")
@@ -451,6 +771,13 @@ def main() -> None:
                 changes = proposal.get("config_changes", {})
                 logger.info(f"Applying: {changes}")
 
+                # --- Snapshot before applying: for keep/revert comparison ---
+                _shift_snapshot = agpt.SYSTEM_PROMPT
+                _pre_median = _get_batch_median_score(history, args.batch_size)
+                _is_history_clear = bool(changes.get("clear_history"))
+                _shift_type = proposal.get("type", "unknown")
+                _shift_rationale = proposal.get("meta_rationale", proposal.get("description", ""))
+
                 if changes.get("universe") == "all":
                     universe = get_all_symbols()
                     logger.info(f"Expanding universe to {len(universe)} symbols...")
@@ -462,13 +789,15 @@ def main() -> None:
                 if changes.get("prompt_hint"):
                     config["prompt_hint"] = changes["prompt_hint"]
 
+                if changes.get("hint_text"):
+                    config["hint_text"] = changes["hint_text"]
+
                 if changes.get("clear_history"):
                     logger.info("Clearing iteration history for fresh start")
                     save_history([])
                     total_spent = 0
 
                 if changes.get("force_monthly"):
-                    import scripts.alpha_gpt as agpt
                     # Patch spec_to_run_params to enforce monthly rebalance
                     _orig_spec_to_run = agpt.spec_to_run_params
                     def _forced_monthly_params(spec, iteration, _orig=_orig_spec_to_run):
@@ -481,6 +810,16 @@ def main() -> None:
                         return params
                     agpt.spec_to_run_params = _forced_monthly_params
                     logger.info("Forced monthly rebalance + max_holding >= 45d")
+
+                # Store pending revert check for next batch
+                config["_pending_revert_check"] = {
+                    "snapshot": _shift_snapshot,
+                    "pre_median": _pre_median,
+                    "shift_type": _shift_type,
+                    "rationale": _shift_rationale,
+                    "is_history_clear": _is_history_clear,
+                    "shift_applied_at": total_spent,
+                }
             else:
                 logger.info("Shift rejected — continuing with current config")
 

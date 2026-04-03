@@ -68,6 +68,7 @@ logger = logging.getLogger(__name__)
 
 PARQUET_DIR = STORAGE_PATH / "parquet"
 HISTORY_PATH = Path(__file__).parent.parent / "data" / "cache" / "alpha_gpt_history.json"
+PROGRAM_MD_PATH = Path(__file__).parent / "program.md"
 
 PSR_TARGET = 0.95
 SHARPE_MIN = 0.5
@@ -77,6 +78,7 @@ MAX_DD_LIMIT = 35.0
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
+# === META-AGENT EDITABLE BLOCK START ===
 SYSTEM_PROMPT = textwrap.dedent("""
 You are AlphaGPT, an expert quantitative researcher discovering alpha factors in US equities.
 
@@ -182,6 +184,23 @@ on a stock×time matrix and backtested. You receive performance feedback and ite
 - ts_zscore(close, 63) = how extreme is today vs recent history
 - cs_demean() removes market-level effects without ranking
 """).strip()
+# === META-AGENT EDITABLE BLOCK END ===
+
+
+def _load_system_prompt() -> str:
+    """Load base SYSTEM_PROMPT and append program.md research direction if it exists.
+
+    program.md is loaded fresh each run so the meta-agent can update it between batches.
+    """
+    prompt = SYSTEM_PROMPT
+    if PROGRAM_MD_PATH.exists():
+        try:
+            program_content = PROGRAM_MD_PATH.read_text(encoding="utf-8").strip()
+            if program_content:
+                prompt = prompt + "\n\n## Research Program\n" + program_content
+        except Exception as e:
+            logger.warning(f"Could not load program.md: {e}")
+    return prompt
 
 
 # ── Diagnosis helper ──────────────────────────────────────────────────────────
@@ -433,7 +452,7 @@ def run_alpha_gpt(
             response = client.messages.create(
                 model=model,
                 max_tokens=1024,
-                system=SYSTEM_PROMPT,
+                system=_load_system_prompt(),
                 messages=[{"role": "user", "content": user_msg}],
             )
             raw = response.content[0].text
@@ -451,6 +470,16 @@ def run_alpha_gpt(
             history.append({
                 "iteration": iteration, "spec": {"raw": raw},
                 "score": {}, "diagnosis": f"JSON parse error: {e}",
+                "timestamp": datetime.now().isoformat(),
+                "trace": {
+                    "raw_llm_response": raw,
+                    "parse_error": str(e),
+                    "backtest_error": None,
+                    "cusum_entry_rate": None,
+                    "meta_label_mean_prob": None,
+                    "cost_drag_pct": None,
+                    "exit_reason_breakdown": None,
+                },
             })
             save_history(history)
             continue
@@ -461,6 +490,16 @@ def run_alpha_gpt(
             history.append({
                 "iteration": iteration, "spec": spec,
                 "score": {}, "diagnosis": f"Validation: {errors}",
+                "timestamp": datetime.now().isoformat(),
+                "trace": {
+                    "raw_llm_response": raw,
+                    "parse_error": None,
+                    "backtest_error": None,
+                    "cusum_entry_rate": None,
+                    "meta_label_mean_prob": None,
+                    "cost_drag_pct": None,
+                    "exit_reason_breakdown": None,
+                },
             })
             save_history(history)
             continue
@@ -477,6 +516,16 @@ def run_alpha_gpt(
             history.append({
                 "iteration": iteration, "spec": spec,
                 "score": {}, "diagnosis": f"Build error: {e}",
+                "timestamp": datetime.now().isoformat(),
+                "trace": {
+                    "raw_llm_response": raw,
+                    "parse_error": None,
+                    "backtest_error": str(e),
+                    "cusum_entry_rate": None,
+                    "meta_label_mean_prob": None,
+                    "cost_drag_pct": None,
+                    "exit_reason_breakdown": None,
+                },
             })
             save_history(history)
             continue
@@ -505,6 +554,8 @@ def run_alpha_gpt(
         logger.info(f"Diagnosis: {diag}")
 
         # ── Record ────────────────────────────────────────────────────────────
+        # Build trace by merging LLM-level data with engine trace from score
+        _engine_trace = (score.trace or {}) if score is not None else {}
         history.append({
             "iteration": iteration,
             "spec": spec,
@@ -518,6 +569,15 @@ def run_alpha_gpt(
             },
             "diagnosis": diag,
             "timestamp": datetime.now().isoformat(),
+            "trace": {
+                "raw_llm_response": raw,
+                "parse_error": None,
+                "backtest_error": _engine_trace.get("backtest_error"),
+                "cusum_entry_rate": _engine_trace.get("cusum_entry_rate"),
+                "meta_label_mean_prob": _engine_trace.get("meta_label_mean_prob"),
+                "cost_drag_pct": _engine_trace.get("cost_drag_pct"),
+                "exit_reason_breakdown": _engine_trace.get("exit_reason_breakdown"),
+            },
         })
         save_history(history)
 
