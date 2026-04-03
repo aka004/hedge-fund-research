@@ -109,6 +109,7 @@ def worker_fn(args: dict) -> None:
             end=args["end"],
             model=args["model"],
             n_strategies_tested=args["n_strategies_tested"],
+            system_prompt=args.get("system_prompt"),
         )
     except Exception as exc:
         import traceback

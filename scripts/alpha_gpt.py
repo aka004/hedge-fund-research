@@ -392,6 +392,7 @@ def run_single_iteration(
     end: str,
     model: str = "claude-sonnet-4-6",
     n_strategies_tested: int = 1,
+    system_prompt: str | None = None,
 ) -> dict:
     """Run a single AlphaGPT iteration and return a history entry dict.
 
@@ -461,7 +462,7 @@ def run_single_iteration(
         response = client.messages.create(
             model=model,
             max_tokens=1024,
-            system=_load_system_prompt(),
+            system=system_prompt if system_prompt is not None else _load_system_prompt(),
             messages=[{"role": "user", "content": user_msg}],
         )
         raw = response.content[0].text

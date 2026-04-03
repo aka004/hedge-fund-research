@@ -595,6 +595,7 @@ def _run_batch_parallel(
     model: str,
     workers: int,
     worker_timeout: int,
+    system_prompt: str | None = None,
 ) -> list[dict]:
     """Run a batch of AlphaGPT iterations in parallel using ProcessPoolExecutor.
 
@@ -632,8 +633,9 @@ def _run_batch_parallel(
             "start": start,
             "end": end,
             "model": model,
-            "n_strategies_tested": len(history_snapshot) + iteration,
+            "n_strategies_tested": len(history_snapshot),
             "output_path": out_path,
+            "system_prompt": system_prompt,
         })
 
     results: list[dict] = []
@@ -644,69 +646,96 @@ def _run_batch_parallel(
         f"(max_workers={workers}, timeout={worker_timeout}s)"
     )
 
-    with ProcessPoolExecutor(max_workers=workers, mp_context=spawn_ctx) as executor:
-        future_to_args = {
-            executor.submit(worker_fn, wargs): wargs
-            for wargs in worker_args
-        }
-
-        for future in as_completed(future_to_args, timeout=worker_timeout + 30):
-            wargs = future_to_args[future]
-            iteration = wargs["iteration"]
-            out_path = wargs["output_path"]
+    try:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=spawn_ctx) as executor:
+            future_to_args = {
+                executor.submit(worker_fn, wargs): wargs
+                for wargs in worker_args
+            }
 
             try:
-                future.result(timeout=worker_timeout)
-                raw = Path(out_path).read_text()
-                entry = json.loads(raw)
-                results.append(entry)
-                logger.info(
-                    f"Worker {iteration} completed: "
-                    f"score={entry.get('score', {}).get('score', '?')}"
-                )
-            except FutureTimeoutError:
-                logger.warning(
-                    f"Worker {iteration} timed out after {worker_timeout}s — "
-                    "recording timeout trace"
-                )
-                timeout_entries.append({
-                    "iteration": iteration,
-                    "spec": {},
-                    "score": {},
-                    "diagnosis": f"Worker timeout after {worker_timeout}s",
-                    "timestamp": datetime.now().isoformat(),
-                    "trace": {
-                        "raw_llm_response": None,
-                        "parse_error": None,
-                        "backtest_error": f"timeout after {worker_timeout}s",
-                        "cusum_entry_rate": None,
-                        "meta_label_mean_prob": None,
-                        "cost_drag_pct": None,
-                        "exit_reason_breakdown": None,
-                    },
-                })
-            except Exception as exc:
-                logger.error(f"Worker {iteration} raised: {exc}")
-                results.append({
-                    "iteration": iteration,
-                    "spec": {},
-                    "score": {},
-                    "diagnosis": f"Worker error: {exc}",
-                    "timestamp": datetime.now().isoformat(),
-                    "trace": {
-                        "raw_llm_response": None,
-                        "parse_error": None,
-                        "backtest_error": str(exc),
-                        "cusum_entry_rate": None,
-                        "meta_label_mean_prob": None,
-                        "cost_drag_pct": None,
-                        "exit_reason_breakdown": None,
-                    },
-                })
+                for future in as_completed(future_to_args, timeout=worker_timeout + 30):
+                    wargs = future_to_args[future]
+                    iteration = wargs["iteration"]
+                    out_path = wargs["output_path"]
 
-    # Clean up temp files
-    for out_path in temp_files:
-        Path(out_path).unlink(missing_ok=True)
+                    try:
+                        future.result(timeout=worker_timeout)
+                        raw = Path(out_path).read_text()
+                        entry = json.loads(raw)
+                        results.append(entry)
+                        logger.info(
+                            f"Worker {iteration} completed: "
+                            f"score={entry.get('score', {}).get('score', '?')}"
+                        )
+                    except FutureTimeoutError:
+                        logger.warning(
+                            f"Worker {iteration} timed out after {worker_timeout}s — "
+                            "recording timeout trace"
+                        )
+                        timeout_entries.append({
+                            "iteration": iteration,
+                            "spec": {},
+                            "score": {},
+                            "diagnosis": f"Worker timeout after {worker_timeout}s",
+                            "timestamp": datetime.now().isoformat(),
+                            "trace": {
+                                "raw_llm_response": None,
+                                "parse_error": None,
+                                "backtest_error": f"timeout after {worker_timeout}s",
+                                "cusum_entry_rate": None,
+                                "meta_label_mean_prob": None,
+                                "cost_drag_pct": None,
+                                "exit_reason_breakdown": None,
+                            },
+                        })
+                    except Exception as exc:
+                        logger.error(f"Worker {iteration} raised: {exc}")
+                        results.append({
+                            "iteration": iteration,
+                            "spec": {},
+                            "score": {},
+                            "diagnosis": f"Worker error: {exc}",
+                            "timestamp": datetime.now().isoformat(),
+                            "trace": {
+                                "raw_llm_response": None,
+                                "parse_error": None,
+                                "backtest_error": str(exc),
+                                "cusum_entry_rate": None,
+                                "meta_label_mean_prob": None,
+                                "cost_drag_pct": None,
+                                "exit_reason_breakdown": None,
+                            },
+                        })
+            except FutureTimeoutError:
+                # Global deadline exceeded — record error entries for any futures that never completed
+                logger.warning(
+                    f"Global timeout ({worker_timeout + 30}s) exceeded — "
+                    f"some workers did not complete"
+                )
+                for future, wargs in future_to_args.items():
+                    if not future.done():
+                        future.cancel()
+                        timeout_entries.append({
+                            "iteration": wargs["iteration"],
+                            "spec": {},
+                            "score": {},
+                            "diagnosis": f"Global timeout: worker did not complete within {worker_timeout + 30}s",
+                            "timestamp": datetime.now().isoformat(),
+                            "trace": {
+                                "raw_llm_response": None,
+                                "parse_error": None,
+                                "backtest_error": f"global timeout after {worker_timeout + 30}s",
+                                "cusum_entry_rate": None,
+                                "meta_label_mean_prob": None,
+                                "cost_drag_pct": None,
+                                "exit_reason_breakdown": None,
+                            },
+                        })
+    finally:
+        # Clean up temp files
+        for out_path in temp_files:
+            Path(out_path).unlink(missing_ok=True)
 
     return sorted(results + timeout_entries, key=lambda e: e["iteration"])
 
@@ -856,6 +885,7 @@ def main() -> None:
                 model=config["model"],
                 workers=args.workers,
                 worker_timeout=args.worker_timeout,
+                system_prompt=agpt.SYSTEM_PROMPT,
             )
 
             # Main process owns the history file — workers never write to it
