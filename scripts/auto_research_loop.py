@@ -14,9 +14,12 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import date
 from pathlib import Path
+
+import anthropic
 
 import pandas as pd
 
@@ -190,7 +193,7 @@ def analyze_batch(history: list[dict]) -> dict:
     }
 
 
-def propose_strategy_shift(analysis: dict, current_config: dict) -> dict | None:
+def _propose_strategy_shift_rules(analysis: dict, current_config: dict) -> dict | None:
     """Based on analysis, propose a config change that needs human approval.
 
     Returns None if no shift needed (just keep iterating).
@@ -246,6 +249,156 @@ def propose_strategy_shift(analysis: dict, current_config: dict) -> dict | None:
         }
 
     return None
+
+
+_META_AGENT_SYSTEM_PROMPT = (
+    "You are a research director reviewing alpha expression discovery attempts.\n"
+    "You receive batch history with expressions tried, scores, and execution traces.\n"
+    "Your job: identify the root cause of stagnation and propose ONE concrete strategy change.\n\n"
+    "Respond ONLY with valid JSON:\n"
+    "{\n"
+    '  "type": "prompt_hint" | "universe_expand" | "rebalance_frequency" | "history_clear" | "no_action",\n'
+    '  "rationale": "1-3 sentences explaining the root cause",\n'
+    '  "change": {\n'
+    "    // For prompt_hint: {\"hint\": \"focus on mean-reversion using ts_zscore operators\"}\n"
+    "    // For universe_expand: {\"target_symbols\": 600}\n"
+    "    // For rebalance_frequency: {\"frequency\": \"monthly\"}\n"
+    "    // For history_clear: {}\n"
+    "    // For no_action: {}\n"
+    "  }\n"
+    "}"
+)
+
+
+def _build_meta_agent_message(history: list[dict], program_md_path: Path, n_batch: int) -> str:
+    """Build the user message for the meta-agent from recent batch history."""
+    program_content = ""
+    if program_md_path.exists():
+        try:
+            program_content = program_md_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
+    lines = []
+    if program_content:
+        lines.append("## Current Research Program\n" + program_content + "\n")
+
+    lines.append(f"## Last {n_batch} Iterations\n")
+    for entry in history[-n_batch:]:
+        i = entry.get("iteration", "?")
+        expr = entry.get("spec", {}).get("expression", "?")
+        score = entry.get("score", {})
+        diag = entry.get("diagnosis", "")
+        trace = entry.get("trace") or {}
+
+        lines.append(f"Iter {i}: {expr}")
+        if score:
+            lines.append(
+                f"  Sharpe={score.get('sharpe', 0):.3f} CAGR={score.get('cagr', 0):.1f}% "
+                f"PSR={score.get('psr', 0):.3f} Trades={score.get('total_trades', 0)}"
+            )
+        lines.append(
+            f"  cusum_entry_rate={trace.get('cusum_entry_rate')} "
+            f"meta_prob={trace.get('meta_label_mean_prob')} "
+            f"cost_drag={trace.get('cost_drag_pct')} "
+            f"exits={trace.get('exit_reason_breakdown')}"
+        )
+        if diag:
+            lines.append(f"  Diagnosis: {diag}")
+
+    lines.append("\nAnalyze the pattern of failures and propose ONE concrete strategy change.")
+    return "\n".join(lines)
+
+
+def propose_strategy_shift(analysis: dict, current_config: dict) -> dict | None:
+    """Call Claude meta-agent to propose a strategy shift. Falls back to rule-based on error.
+
+    Returns None for no_action or if no issues detected.
+    Returns a proposal dict compatible with ask_approval() and the apply logic below it.
+    """
+    issues = analysis.get("issues", [])
+    if not issues:
+        return None
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.warning("No ANTHROPIC_API_KEY — using rule-based strategy shift")
+        return _propose_strategy_shift_rules(analysis, current_config)
+
+    history = load_history()
+    batch_size = current_config.get("batch_size", 10)
+    program_md_path = Path(__file__).parent / "program.md"
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        user_msg = _build_meta_agent_message(history, program_md_path, n_batch=batch_size)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            temperature=0.3,
+            system=_META_AGENT_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        raw = response.content[0].text.strip()
+        logger.info(f"Meta-agent response: {raw[:300]}")
+
+        # Parse JSON — handle markdown code fences
+        text = raw
+        if "```" in text:
+            start = text.find("{", text.find("```"))
+            end = text.rfind("}") + 1
+            if start >= 0 and end > start:
+                text = text[start:end]
+        proposal_json = json.loads(text)
+
+        if "type" not in proposal_json or "rationale" not in proposal_json:
+            raise ValueError(f"Meta-agent response missing required fields: {proposal_json}")
+
+        shift_type = proposal_json["type"]
+        change = proposal_json.get("change", {})
+        rationale = proposal_json["rationale"]
+
+        if shift_type == "no_action":
+            logger.info(f"Meta-agent: no action needed — {rationale}")
+            return None
+
+        # Convert meta-agent JSON → internal proposal format (same shape as _propose_strategy_shift_rules)
+        if shift_type == "prompt_hint":
+            hint_text = change.get("hint", "Try different operator combinations")
+            return {
+                "type": "prompt_hint",
+                "description": f"Meta-agent: {rationale}\nHint: {hint_text}",
+                "config_changes": {"prompt_hint": "custom", "hint_text": hint_text},
+                "meta_rationale": rationale,
+            }
+        if shift_type == "universe_expand":
+            return {
+                "type": "expand_universe",
+                "description": f"Meta-agent: {rationale}\nProposal: Expand universe.",
+                "config_changes": {"universe": "all"},
+                "meta_rationale": rationale,
+            }
+        if shift_type == "rebalance_frequency":
+            freq = change.get("frequency", "monthly")
+            return {
+                "type": "reduce_turnover",
+                "description": f"Meta-agent: {rationale}\nProposal: Switch to {freq} rebalance.",
+                "config_changes": {"force_monthly": freq == "monthly"},
+                "meta_rationale": rationale,
+            }
+        if shift_type == "history_clear":
+            return {
+                "type": "reset_direction",
+                "description": f"Meta-agent: {rationale}\nProposal: Clear history.",
+                "config_changes": {"clear_history": True},
+                "meta_rationale": rationale,
+            }
+
+        raise ValueError(f"Unknown shift type from meta-agent: {shift_type}")
+
+    except Exception as e:
+        logger.warning(f"Meta-agent call failed ({e}) — falling back to rule-based shift")
+        return _propose_strategy_shift_rules(analysis, current_config)
 
 
 # ── Prompt hint injection ─────────────────────────────────────────────────────
@@ -410,6 +563,12 @@ def main() -> None:
             import scripts.alpha_gpt as agpt
             agpt.SYSTEM_PROMPT = agpt.SYSTEM_PROMPT.rstrip() + DIVERSITY_HINTS[hint]
             logger.info(f"Injected prompt hint: {hint}")
+        elif hint == "custom":
+            custom_text = config.get("hint_text", "")
+            if custom_text:
+                import scripts.alpha_gpt as agpt
+                agpt.SYSTEM_PROMPT = agpt.SYSTEM_PROMPT.rstrip() + "\n\nIMPORTANT: " + custom_text
+                logger.info(f"Injected custom meta-agent hint: {custom_text[:80]}")
 
         # ── Run AlphaGPT batch ────────────────────────────────────────────
         winner = run_alpha_gpt(
@@ -461,6 +620,9 @@ def main() -> None:
 
                 if changes.get("prompt_hint"):
                     config["prompt_hint"] = changes["prompt_hint"]
+
+                if changes.get("hint_text"):
+                    config["hint_text"] = changes["hint_text"]
 
                 if changes.get("clear_history"):
                     logger.info("Clearing iteration history for fresh start")
