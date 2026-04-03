@@ -74,6 +74,7 @@ class RunScore:
     passed: bool
     params: dict
     daily_returns: pd.Series = None  # kept for CPCV validation, not serialized
+    trace: dict = None               # NEW: structured trace for AutoAgent analysis
 
 
 def composite_score(
@@ -348,7 +349,54 @@ def run_config(
             score=-999,
             passed=False,
             params=params,
+            trace={
+                "raw_llm_response": None,
+                "parse_error": None,
+                "backtest_error": str(e),
+                "cusum_entry_rate": None,
+                "meta_label_mean_prob": None,
+                "cost_drag_pct": None,
+                "exit_reason_breakdown": None,
+            },
         )
+
+    # --- Compute trace fields ---
+    # Change B: exit_reason_breakdown
+    exit_reason_breakdown = None
+    if not result.trade_log.empty and "exit_reason" in result.trade_log.columns:
+        total = len(result.trade_log)
+        if total > 0:
+            reasons = result.trade_log["exit_reason"].value_counts()
+            # Map engine exit reasons → spec names
+            # "rebalance_out" lumped into "time"; "cusum_reversal" into "stop"
+            exit_reason_breakdown = {
+                "time":   round((reasons.get("timeout", 0) + reasons.get("rebalance_out", 0)) / total, 3),
+                "profit": round(reasons.get("profit_target", 0) / total, 3),
+                "stop":   round((reasons.get("stop_loss", 0) + reasons.get("cusum_reversal", 0)) / total, 3),
+            }
+
+    # Change C: cost_drag_pct
+    cost_drag_pct = None
+    if not result.trade_log.empty and "entry_price" in result.trade_log.columns and "exit_price" in result.trade_log.columns:
+        tl_tmp = result.trade_log.copy()
+        tl_tmp["_pnl_pct"] = (tl_tmp["exit_price"] - tl_tmp["entry_price"]) / tl_tmp["entry_price"]
+        winners_tmp = tl_tmp[tl_tmp["_pnl_pct"] > 0]["_pnl_pct"]
+        if len(winners_tmp) > 0:
+            gross_return = float(winners_tmp.mean())
+            slippage_rate = params.get("slippage_bps", 25) / 10000
+            if gross_return > 0:
+                cost_drag_pct = round(slippage_rate / gross_return, 3)
+
+    # Change D: cusum_entry_rate and meta_label_mean_prob from engine_stats
+    eng_stats = result.engine_stats
+    cusum_entry_rate = None
+    if eng_stats.get("cusum_total", 0) > 0:
+        cusum_entry_rate = round(eng_stats["cusum_passed"] / eng_stats["cusum_total"], 3)
+
+    meta_label_mean_prob = None
+    meta_probs = eng_stats.get("meta_probs", [])
+    if meta_probs:
+        meta_label_mean_prob = round(sum(meta_probs) / len(meta_probs), 3)
 
     metrics = calculate_metrics(
         result.daily_returns,
@@ -430,6 +478,15 @@ def run_config(
         passed=passed,
         params=params,
         daily_returns=result.daily_returns,
+        trace={
+            "raw_llm_response": None,   # filled in by alpha_gpt.py caller
+            "parse_error": None,         # filled in by alpha_gpt.py caller
+            "backtest_error": None,
+            "cusum_entry_rate": cusum_entry_rate,
+            "meta_label_mean_prob": meta_label_mean_prob,
+            "cost_drag_pct": cost_drag_pct,
+            "exit_reason_breakdown": exit_reason_breakdown,
+        },
     )
 
     logger.info(
