@@ -1,9 +1,8 @@
 """Tests for parallel_worker: temp-file result passing, resource limits, error handling."""
 import json
-import os
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 import sys
 import numpy as np
 import pandas as pd
