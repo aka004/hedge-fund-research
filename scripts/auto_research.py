@@ -360,8 +360,7 @@ def run_config(
             },
         )
 
-    # --- Compute trace fields ---
-    # Change B: exit_reason_breakdown
+    # --- Compute trace fields (exit breakdown, cost drag, CUSUM/meta stats) ---
     exit_reason_breakdown = None
     if not result.trade_log.empty and "exit_reason" in result.trade_log.columns:
         total = len(result.trade_log)
@@ -369,13 +368,16 @@ def run_config(
             reasons = result.trade_log["exit_reason"].value_counts()
             # Map engine exit reasons → spec names
             # "rebalance_out" lumped into "time"; "cusum_reversal" into "stop"
+            time_frac   = (reasons.get("timeout", 0) + reasons.get("rebalance_out", 0)) / total
+            profit_frac = reasons.get("profit_target", 0) / total
+            stop_frac   = (reasons.get("stop_loss", 0) + reasons.get("cusum_reversal", 0)) / total
             exit_reason_breakdown = {
-                "time":   round((reasons.get("timeout", 0) + reasons.get("rebalance_out", 0)) / total, 3),
-                "profit": round(reasons.get("profit_target", 0) / total, 3),
-                "stop":   round((reasons.get("stop_loss", 0) + reasons.get("cusum_reversal", 0)) / total, 3),
+                "time":   round(time_frac, 3),
+                "profit": round(profit_frac, 3),
+                "stop":   round(stop_frac, 3),
+                "other":  round(max(0.0, 1.0 - time_frac - profit_frac - stop_frac), 3),
             }
 
-    # Change C: cost_drag_pct
     cost_drag_pct = None
     if not result.trade_log.empty and "entry_price" in result.trade_log.columns and "exit_price" in result.trade_log.columns:
         tl_tmp = result.trade_log.copy()
@@ -384,10 +386,11 @@ def run_config(
         if len(winners_tmp) > 0:
             gross_return = float(winners_tmp.mean())
             slippage_rate = params.get("slippage_bps", 25) / 10000
+            # cost_drag_pct: ratio of round-trip slippage to avg gross winner (0.0–1.0 scale)
             if gross_return > 0:
                 cost_drag_pct = round(slippage_rate / gross_return, 3)
 
-    # Change D: cusum_entry_rate and meta_label_mean_prob from engine_stats
+    # cusum_entry_rate and meta_label_mean_prob from engine_stats
     eng_stats = result.engine_stats
     cusum_entry_rate = None
     if eng_stats.get("cusum_total", 0) > 0:
