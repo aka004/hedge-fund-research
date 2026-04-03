@@ -451,6 +451,16 @@ def run_alpha_gpt(
             history.append({
                 "iteration": iteration, "spec": {"raw": raw},
                 "score": {}, "diagnosis": f"JSON parse error: {e}",
+                "timestamp": datetime.now().isoformat(),
+                "trace": {
+                    "raw_llm_response": raw,
+                    "parse_error": str(e),
+                    "backtest_error": None,
+                    "cusum_entry_rate": None,
+                    "meta_label_mean_prob": None,
+                    "cost_drag_pct": None,
+                    "exit_reason_breakdown": None,
+                },
             })
             save_history(history)
             continue
@@ -461,6 +471,16 @@ def run_alpha_gpt(
             history.append({
                 "iteration": iteration, "spec": spec,
                 "score": {}, "diagnosis": f"Validation: {errors}",
+                "timestamp": datetime.now().isoformat(),
+                "trace": {
+                    "raw_llm_response": raw,
+                    "parse_error": None,
+                    "backtest_error": None,
+                    "cusum_entry_rate": None,
+                    "meta_label_mean_prob": None,
+                    "cost_drag_pct": None,
+                    "exit_reason_breakdown": None,
+                },
             })
             save_history(history)
             continue
@@ -477,6 +497,16 @@ def run_alpha_gpt(
             history.append({
                 "iteration": iteration, "spec": spec,
                 "score": {}, "diagnosis": f"Build error: {e}",
+                "timestamp": datetime.now().isoformat(),
+                "trace": {
+                    "raw_llm_response": raw,
+                    "parse_error": None,
+                    "backtest_error": str(e),
+                    "cusum_entry_rate": None,
+                    "meta_label_mean_prob": None,
+                    "cost_drag_pct": None,
+                    "exit_reason_breakdown": None,
+                },
             })
             save_history(history)
             continue
@@ -505,6 +535,8 @@ def run_alpha_gpt(
         logger.info(f"Diagnosis: {diag}")
 
         # ── Record ────────────────────────────────────────────────────────────
+        # Build trace by merging LLM-level data with engine trace from score
+        _engine_trace = (score.trace or {}) if score is not None else {}
         history.append({
             "iteration": iteration,
             "spec": spec,
@@ -518,6 +550,15 @@ def run_alpha_gpt(
             },
             "diagnosis": diag,
             "timestamp": datetime.now().isoformat(),
+            "trace": {
+                "raw_llm_response": raw,
+                "parse_error": None,
+                "backtest_error": _engine_trace.get("backtest_error"),
+                "cusum_entry_rate": _engine_trace.get("cusum_entry_rate"),
+                "meta_label_mean_prob": _engine_trace.get("meta_label_mean_prob"),
+                "cost_drag_pct": _engine_trace.get("cost_drag_pct"),
+                "exit_reason_breakdown": _engine_trace.get("exit_reason_breakdown"),
+            },
         })
         save_history(history)
 
