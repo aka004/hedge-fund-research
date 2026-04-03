@@ -78,7 +78,7 @@ MAX_DD_LIMIT = 35.0
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-# === META-AGENT EDITABLE BLOCK ===
+# === META-AGENT EDITABLE BLOCK START ===
 SYSTEM_PROMPT = textwrap.dedent("""
 You are AlphaGPT, an expert quantitative researcher discovering alpha factors in US equities.
 
@@ -184,7 +184,7 @@ on a stock×time matrix and backtested. You receive performance feedback and ite
 - ts_zscore(close, 63) = how extreme is today vs recent history
 - cs_demean() removes market-level effects without ranking
 """).strip()
-# === FIXED ADAPTER BOUNDARY — DO NOT EDIT BELOW ===
+# === META-AGENT EDITABLE BLOCK END ===
 
 
 def _load_system_prompt() -> str:
@@ -195,7 +195,7 @@ def _load_system_prompt() -> str:
     prompt = SYSTEM_PROMPT
     if PROGRAM_MD_PATH.exists():
         try:
-            program_content = PROGRAM_MD_PATH.read_text().strip()
+            program_content = PROGRAM_MD_PATH.read_text(encoding="utf-8").strip()
             if program_content:
                 prompt = prompt + "\n\n## Research Program\n" + program_content
         except Exception as e:
