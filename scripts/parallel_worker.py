@@ -80,6 +80,7 @@ def worker_fn(args: dict) -> None:
             end              — str, ISO date
             model            — str, Claude model name
             n_strategies_tested — int
+            system_prompt    — str | None, resolved system prompt (includes program.md)
             output_path      — str, path to write result JSON
     """
     logging.basicConfig(

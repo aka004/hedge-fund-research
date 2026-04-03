@@ -885,7 +885,7 @@ def main() -> None:
                 model=config["model"],
                 workers=args.workers,
                 worker_timeout=args.worker_timeout,
-                system_prompt=agpt.SYSTEM_PROMPT,
+                system_prompt=agpt._load_system_prompt(),
             )
 
             # Main process owns the history file — workers never write to it
