@@ -379,6 +379,185 @@ def spec_to_run_params(spec: dict, iteration: int) -> dict:
     }
 
 
+def run_single_iteration(
+    iteration: int,
+    history_snapshot: list[dict],
+    universe: list[str],
+    close_prices: pd.DataFrame,
+    open_prices: pd.DataFrame,
+    ohlcv: dict[str, pd.DataFrame],
+    macro_prices,
+    sentiment_prices,
+    start: str,
+    end: str,
+    model: str = "claude-sonnet-4-6",
+    n_strategies_tested: int = 1,
+    system_prompt: str | None = None,
+) -> dict:
+    """Run a single AlphaGPT iteration and return a history entry dict.
+
+    Pure function — never writes to disk. Safe to call from a worker process.
+
+    Parameters
+    ----------
+    iteration : int
+        Iteration number (used in labels and entry dict).
+    history_snapshot : list[dict]
+        Read-only snapshot of prior history entries (used to build user message).
+    universe : list[str]
+        Ticker symbols to trade.
+    close_prices : pd.DataFrame
+        Close price matrix (dates x symbols).
+    open_prices : pd.DataFrame
+        Open price matrix (dates x symbols).
+    ohlcv : dict[str, pd.DataFrame]
+        Dict of OHLCV DataFrames keyed by column name.
+    macro_prices : any
+        Macro data passed through to run_config.
+    sentiment_prices : any
+        Sentiment data passed through to run_config.
+    start : str
+        Backtest start date (ISO format).
+    end : str
+        Backtest end date (ISO format).
+    model : str
+        Anthropic model name.
+    n_strategies_tested : int
+        Number of strategies tested so far (for DSR deflation).
+
+    Returns
+    -------
+    dict
+        History entry with keys: iteration, spec, score, diagnosis, timestamp, trace.
+        Error paths return the same shape with empty score and diagnosis explaining the error.
+    """
+    def _error_entry(diag, *, spec=None, raw=None, parse_err=None, bt_err=None):
+        return {
+            "iteration": iteration,
+            "spec": spec if spec is not None else {},
+            "score": {},
+            "diagnosis": diag,
+            "timestamp": datetime.now().isoformat(),
+            "trace": {
+                "raw_llm_response": raw,
+                "parse_error": parse_err,
+                "backtest_error": bt_err,
+                "cusum_entry_rate": None,
+                "meta_label_mean_prob": None,
+                "cost_drag_pct": None,
+                "exit_reason_breakdown": None,
+            },
+        }
+
+    # ── API key ──────────────────────────────────────────────────────────────
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return _error_entry("Missing ANTHROPIC_API_KEY — set it in the environment")
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # ── Ask the LLM ──────────────────────────────────────────────────────────
+    user_msg = build_user_message(history_snapshot)
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            system=system_prompt if system_prompt is not None else _load_system_prompt(),
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        raw = response.content[0].text
+        logger.info(f"[iter {iteration}] LLM: {raw[:200]}{'...' if len(raw) > 200 else ''}")
+    except Exception as e:
+        return _error_entry(f"LLM call failed: {e}")
+
+    # ── Parse ─────────────────────────────────────────────────────────────────
+    try:
+        spec = parse_spec(raw)
+    except json.JSONDecodeError as e:
+        return _error_entry(
+            f"JSON parse error: {e}",
+            spec={"raw": raw},
+            raw=raw,
+            parse_err=str(e),
+        )
+
+    # ── Validate ──────────────────────────────────────────────────────────────
+    errors = validate_spec(spec)
+    if errors:
+        return _error_entry(
+            f"Validation: {errors}",
+            spec=spec,
+            raw=raw,
+        )
+
+    expr = spec["expression"]
+
+    # ── Build signal ──────────────────────────────────────────────────────────
+    try:
+        combiner = build_signal(expr, ohlcv)
+    except Exception as e:
+        return _error_entry(
+            f"Build error: {e}",
+            spec=spec,
+            raw=raw,
+            bt_err=str(e),
+        )
+
+    # ── Run backtest ──────────────────────────────────────────────────────────
+    params = spec_to_run_params(spec, iteration)
+    score = run_config(
+        params=params,
+        universe=universe,
+        close_prices=close_prices,
+        open_prices=open_prices,
+        macro_prices=macro_prices,
+        sentiment_prices=sentiment_prices,
+        start=start,
+        end=end,
+        duckdb_store=None,
+        parquet_storage=None,
+        combiner=combiner,
+        n_strategies_tested=n_strategies_tested,
+    )
+
+    diag = diagnose(score)
+    logger.info(f"[iter {iteration}] {diag}")
+
+    # ── Build entry dict ──────────────────────────────────────────────────────
+    _engine_trace = (score.trace or {}) if score is not None else {}
+    entry = {
+        "iteration": iteration,
+        "spec": spec,
+        "score": {
+            "sharpe": score.sharpe, "cagr": score.cagr,
+            "max_dd": score.max_dd, "profit_factor": score.profit_factor,
+            "win_rate": score.win_rate, "avg_win_pct": score.avg_win_pct,
+            "avg_loss_pct": score.avg_loss_pct, "total_trades": score.total_trades,
+            "avg_holding": score.avg_holding, "psr": score.psr,
+            "score": score.score, "passed": score.passed,
+        },
+        "diagnosis": diag,
+        "timestamp": datetime.now().isoformat(),
+        "trace": {
+            "raw_llm_response": raw,
+            "parse_error": None,
+            "backtest_error": _engine_trace.get("backtest_error"),
+            "cusum_entry_rate": _engine_trace.get("cusum_entry_rate"),
+            "meta_label_mean_prob": _engine_trace.get("meta_label_mean_prob"),
+            "cost_drag_pct": _engine_trace.get("cost_drag_pct"),
+            "exit_reason_breakdown": _engine_trace.get("exit_reason_breakdown"),
+        },
+    }
+
+    # ── CPCV gate for winners ─────────────────────────────────────────────────
+    if score.psr >= PSR_TARGET and score.passed:
+        if score.daily_returns is not None:
+            cpcv_result = validate_winner_cpcv(score.daily_returns)
+            entry["cpcv"] = cpcv_result
+
+    return entry
+
+
 # ── History I/O ───────────────────────────────────────────────────────────────
 
 

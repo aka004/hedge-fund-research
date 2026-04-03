@@ -112,7 +112,7 @@ def meta_label_fit(
             n_estimators=100,
             max_depth=5,
             random_state=42,
-            n_jobs=-1,
+            n_jobs=1,
         )
         rf.fit(X_train, y_train)
 
@@ -133,7 +133,7 @@ def meta_label_fit(
         n_estimators=100,
         max_depth=5,
         random_state=42,
-        n_jobs=-1,
+        n_jobs=1,
     )
     final_rf.fit(X, binary_correct)
 

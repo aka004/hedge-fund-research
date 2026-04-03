@@ -18,7 +18,9 @@ import os
 import statistics
 import subprocess
 import sys
+import multiprocessing
 import tempfile
+from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 from datetime import date, datetime
 from pathlib import Path
 
@@ -579,6 +581,165 @@ def _write_system_prompt_to_disk(new_prompt: str, rationale: str = "") -> str | 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 
+def _run_batch_parallel(
+    batch_iterations: list[int],
+    history_snapshot: list[dict],
+    universe: list[str],
+    close_prices,
+    open_prices,
+    ohlcv: dict,
+    macro_prices,
+    sentiment_prices,
+    start: str,
+    end: str,
+    model: str,
+    workers: int,
+    worker_timeout: int,
+    system_prompt: str | None = None,
+) -> list[dict]:
+    """Run a batch of AlphaGPT iterations in parallel using ProcessPoolExecutor.
+
+    Each worker gets its own isolated copy of state (spawn, no fork), writes its
+    result to a unique temp JSON file, and is abandoned if it exceeds worker_timeout.
+
+    Results are sorted by iteration number before return. Crashed or timed-out
+    workers produce an error entry — this function never raises.
+
+    Returns:
+        list[dict] — history entries, one per iteration, sorted by iteration.
+    """
+    from scripts.parallel_worker import worker_fn
+
+    spawn_ctx = multiprocessing.get_context("spawn")
+
+    # Create temp files — one per worker
+    temp_files: list[str] = []
+    for _ in batch_iterations:
+        tf = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        tf.close()
+        temp_files.append(tf.name)
+
+    worker_args = []
+    for iteration, out_path in zip(batch_iterations, temp_files):
+        worker_args.append({
+            "iteration": iteration,
+            "history_snapshot": history_snapshot,
+            "universe": universe,
+            "close_prices": close_prices,
+            "open_prices": open_prices,
+            "ohlcv": ohlcv,
+            "macro_prices": macro_prices,
+            "sentiment_prices": sentiment_prices,
+            "start": start,
+            "end": end,
+            "model": model,
+            "n_strategies_tested": len(history_snapshot),
+            "output_path": out_path,
+            "system_prompt": system_prompt,
+        })
+
+    results: list[dict] = []
+    timeout_entries: list[dict] = []
+
+    logger.info(
+        f"Launching {len(batch_iterations)} parallel workers "
+        f"(max_workers={workers}, timeout={worker_timeout}s)"
+    )
+
+    try:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=spawn_ctx) as executor:
+            future_to_args = {
+                executor.submit(worker_fn, wargs): wargs
+                for wargs in worker_args
+            }
+
+            try:
+                for future in as_completed(future_to_args, timeout=worker_timeout + 30):
+                    wargs = future_to_args[future]
+                    iteration = wargs["iteration"]
+                    out_path = wargs["output_path"]
+
+                    try:
+                        future.result(timeout=worker_timeout)
+                        raw = Path(out_path).read_text()
+                        entry = json.loads(raw)
+                        results.append(entry)
+                        logger.info(
+                            f"Worker {iteration} completed: "
+                            f"score={entry.get('score', {}).get('score', '?')}"
+                        )
+                    except FutureTimeoutError:
+                        logger.warning(
+                            f"Worker {iteration} timed out after {worker_timeout}s — "
+                            "recording timeout trace"
+                        )
+                        timeout_entries.append({
+                            "iteration": iteration,
+                            "spec": {},
+                            "score": {},
+                            "diagnosis": f"Worker timeout after {worker_timeout}s",
+                            "timestamp": datetime.now().isoformat(),
+                            "trace": {
+                                "raw_llm_response": None,
+                                "parse_error": None,
+                                "backtest_error": f"timeout after {worker_timeout}s",
+                                "cusum_entry_rate": None,
+                                "meta_label_mean_prob": None,
+                                "cost_drag_pct": None,
+                                "exit_reason_breakdown": None,
+                            },
+                        })
+                    except Exception as exc:
+                        logger.error(f"Worker {iteration} raised: {exc}")
+                        results.append({
+                            "iteration": iteration,
+                            "spec": {},
+                            "score": {},
+                            "diagnosis": f"Worker error: {exc}",
+                            "timestamp": datetime.now().isoformat(),
+                            "trace": {
+                                "raw_llm_response": None,
+                                "parse_error": None,
+                                "backtest_error": str(exc),
+                                "cusum_entry_rate": None,
+                                "meta_label_mean_prob": None,
+                                "cost_drag_pct": None,
+                                "exit_reason_breakdown": None,
+                            },
+                        })
+            except FutureTimeoutError:
+                # Global deadline exceeded — record error entries for any futures that never completed
+                logger.warning(
+                    f"Global timeout ({worker_timeout + 30}s) exceeded — "
+                    f"some workers did not complete"
+                )
+                for future, wargs in future_to_args.items():
+                    if not future.done():
+                        future.cancel()
+                        timeout_entries.append({
+                            "iteration": wargs["iteration"],
+                            "spec": {},
+                            "score": {},
+                            "diagnosis": f"Global timeout: worker did not complete within {worker_timeout + 30}s",
+                            "timestamp": datetime.now().isoformat(),
+                            "trace": {
+                                "raw_llm_response": None,
+                                "parse_error": None,
+                                "backtest_error": f"global timeout after {worker_timeout + 30}s",
+                                "cusum_entry_rate": None,
+                                "meta_label_mean_prob": None,
+                                "cost_drag_pct": None,
+                                "exit_reason_breakdown": None,
+                            },
+                        })
+    finally:
+        # Clean up temp files
+        for out_path in temp_files:
+            Path(out_path).unlink(missing_ok=True)
+
+    return sorted(results + timeout_entries, key=lambda e: e["iteration"])
+
+
 def get_all_symbols() -> list[str]:
     """Get all symbols with parquet price data."""
     prices_dir = PARQUET_DIR / "prices"
@@ -595,6 +756,12 @@ def main() -> None:
     ap.add_argument("--universe", default=None, help="Universe file or 'all' for all symbols")
     ap.add_argument("--no-resume", action="store_true")
     ap.add_argument("--skip-preflight", action="store_true")
+    ap.add_argument("--workers", type=int, default=4,
+                    help="Parallel workers per batch (default: 4)")
+    ap.add_argument("--worker-timeout", type=int, default=300,
+                    help="Seconds before killing a worker (default: 300)")
+    ap.add_argument("--no-parallel", action="store_true",
+                    help="Disable parallelism, run sequentially (original behavior)")
     args = ap.parse_args()
 
     # ── Universe ──────────────────────────────────────────────────────────
@@ -681,21 +848,79 @@ def main() -> None:
                 logger.info(f"Injected custom meta-agent hint: {custom_text[:80]}")
 
         # ── Run AlphaGPT batch ────────────────────────────────────────────
-        winner = run_alpha_gpt(
-            universe=available,
-            close_prices=close_prices,
-            open_prices=open_prices,
-            ohlcv=ohlcv,
-            macro_prices=macro_prices,
-            sentiment_prices=sentiment_prices,
-            start=args.start,
-            end=args.end,
-            duckdb_store=duckdb_store,
-            parquet_storage=parquet_storage,
-            max_iter=this_batch,
-            model=config["model"],
-            resume=True,
-        )
+        if args.no_parallel:
+            # ── Sequential mode (original behavior) ──────────────────────────
+            winner = run_alpha_gpt(
+                universe=available,
+                close_prices=close_prices,
+                open_prices=open_prices,
+                ohlcv=ohlcv,
+                macro_prices=macro_prices,
+                sentiment_prices=sentiment_prices,
+                start=args.start,
+                end=args.end,
+                duckdb_store=duckdb_store,
+                parquet_storage=parquet_storage,
+                max_iter=this_batch,
+                model=config["model"],
+                resume=True,
+            )
+        else:
+            # ── Parallel mode ─────────────────────────────────────────────────
+            history_snapshot = load_history()
+            start_iter = len(history_snapshot) + 1
+            batch_iters = list(range(start_iter, start_iter + this_batch))
+
+            entries = _run_batch_parallel(
+                batch_iterations=batch_iters,
+                history_snapshot=history_snapshot,
+                universe=available,
+                close_prices=close_prices,
+                open_prices=open_prices,
+                ohlcv=ohlcv,
+                macro_prices=macro_prices,
+                sentiment_prices=sentiment_prices,
+                start=args.start,
+                end=args.end,
+                model=config["model"],
+                workers=args.workers,
+                worker_timeout=args.worker_timeout,
+                system_prompt=agpt._load_system_prompt(),
+            )
+
+            # Main process owns the history file — workers never write to it
+            history_snapshot.extend(entries)
+            save_history(history_snapshot)
+
+            # Check if any worker found a winner
+            winner = None
+            for entry in entries:
+                score = entry.get("score", {})
+                if score.get("psr", 0) >= PSR_TARGET and score.get("passed"):
+                    from scripts.auto_research import RunScore
+                    winner = RunScore(
+                        config_id=entry.get("spec", {}).get("expression", "parallel_winner"),
+                        sharpe=score.get("sharpe", 0),
+                        cagr=score.get("cagr", 0),
+                        max_dd=score.get("max_dd", 0),
+                        profit_factor=score.get("profit_factor", 1),
+                        win_rate=score.get("win_rate", 0),
+                        avg_win_pct=score.get("avg_win_pct", 0),
+                        avg_loss_pct=score.get("avg_loss_pct", 0),
+                        kelly_fraction=0.0,
+                        total_trades=score.get("total_trades", 0),
+                        avg_holding=score.get("avg_holding", 0),
+                        psr=score.get("psr", 0),
+                        score=score.get("score", 0),
+                        passed=True,
+                        params={},
+                        daily_returns=pd.Series(dtype=float),
+                    )
+                    logger.info(
+                        f"Parallel winner at iteration {entry['iteration']}! "
+                        f"PSR={score.get('psr', 0):.3f}"
+                    )
+                    break
 
         total_spent = len(load_history())
 
