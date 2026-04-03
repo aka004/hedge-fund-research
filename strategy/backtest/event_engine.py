@@ -48,6 +48,7 @@ class EventEngineResult:
     daily_returns: pd.Series
     benchmark_returns: pd.Series
     open_positions: list[RoundTripTrade]
+    engine_stats: dict = field(default_factory=dict)  # NEW: CUSUM/meta trace data
 
 
 class EventDrivenEngine:
@@ -138,6 +139,11 @@ class EventDrivenEngine:
         if bench in close_prices.columns and actual_start in close_prices.index:
             bench_start_price = close_prices.loc[actual_start, bench]
 
+        # --- Trace stats accumulation ---
+        _cusum_total = 0      # total new signal candidates across all rebalances
+        _cusum_passed = 0     # signals that cleared the CUSUM gate
+        _meta_probs: list[float] = []  # P(win) collected per entry
+
         for today in trading_days:
             today_open = self._get_prices_for_date(open_prices, today)
             today_close = self._get_prices_for_date(close_prices, today)
@@ -205,7 +211,7 @@ class EventDrivenEngine:
                     yesterday = today - timedelta(days=1)
                     meta_label_clf = self._train_meta_label(close_prices, yesterday)
 
-                cash, positions, completed_trades = self._handle_rebalance(
+                cash, positions, completed_trades, reb_stats = self._handle_rebalance(
                     today=today,
                     universe=universe,
                     today_open=today_open,
@@ -217,6 +223,9 @@ class EventDrivenEngine:
                     meta_label_clf=meta_label_clf,
                     close_prices=close_prices,
                 )
+                _cusum_total += reb_stats["cusum_total"]
+                _cusum_passed += reb_stats["cusum_passed"]
+                _meta_probs.extend(reb_stats["meta_probs"])
 
             # --- Step C: Mark-to-market at today's CLOSE ---
             for symbol, trade in positions.items():
@@ -270,6 +279,11 @@ class EventDrivenEngine:
             completed_trades,
             positions,
             bench_start_price,
+            engine_stats={
+                "cusum_total": _cusum_total,
+                "cusum_passed": _cusum_passed,
+                "meta_probs": _meta_probs,
+            },
         )
 
     def _handle_rebalance(
@@ -284,8 +298,8 @@ class EventDrivenEngine:
         regime_mult: float = 1.0,
         meta_label_clf=None,
         close_prices: pd.DataFrame | None = None,
-    ) -> tuple[float, dict[str, RoundTripTrade], list[RoundTripTrade]]:
-        """Process rebalance: exit stale, enter new. Returns (cash, positions, completed)."""
+    ) -> tuple[float, dict[str, RoundTripTrade], list[RoundTripTrade], dict]:
+        """Process rebalance: exit stale, enter new. Returns (cash, positions, completed, stats)."""
         # Generate signals using data through YESTERDAY (no look-ahead)
         yesterday = today - timedelta(days=1)
         signals = self.signal_combiner.get_top_picks(
@@ -318,7 +332,11 @@ class EventDrivenEngine:
         # Enter new positions for symbols not already held
         new_symbols = [s for s in signals if s.symbol not in positions]
         if not new_symbols:
-            return cash, positions, completed_trades
+            return cash, positions, completed_trades, {
+                "cusum_total": 0,
+                "cusum_passed": 0,
+                "meta_probs": [],
+            }
 
         # Compute current equity for weight calculation
         position_value = sum(
@@ -331,15 +349,24 @@ class EventDrivenEngine:
             new_symbols, completed_trades, close_prices=close_prices, as_of_date=today
         )
 
+        # --- NEW: track CUSUM and meta stats for this rebalance ---
+        _reb_cusum_total = 0
+        _reb_cusum_passed = 0
+        _reb_meta_probs: list[float] = []
+
         for symbol, weight in weights.items():
             if symbol not in today_open:
                 continue
             if len(positions) >= self.config.max_positions:
                 break
+
             # CUSUM entry gate: skip if no recent upside fire
+            # NEW: count all candidates, then count passes
+            _reb_cusum_total += 1
             if self.config.use_cusum_gate and upside_cusum is not None:
                 if symbol not in upside_cusum:
                     continue
+            _reb_cusum_passed += 1
 
             # Meta-label P(win) — scales position size
             meta_prob = (
@@ -347,6 +374,7 @@ class EventDrivenEngine:
                 if self.config.use_meta_labeling and close_prices is not None
                 else 0.5
             )
+            _reb_meta_probs.append(meta_prob)   # NEW: collect prob
 
             # Cap at max_position_weight, then apply regime_mult and meta_prob
             capped_weight = min(weight, self.config.max_position_weight)
@@ -386,7 +414,11 @@ class EventDrivenEngine:
                 shares=shares,
             )
 
-        return cash, positions, completed_trades
+        return cash, positions, completed_trades, {
+            "cusum_total": _reb_cusum_total,
+            "cusum_passed": _reb_cusum_passed,
+            "meta_probs": _reb_meta_probs,
+        }
 
     def _precompute_cusum(
         self,
@@ -758,6 +790,7 @@ class EventDrivenEngine:
             daily_returns=pd.Series(dtype=float),
             benchmark_returns=pd.Series(dtype=float),
             open_positions=[],
+            engine_stats={},   # NEW
         )
 
     def _build_result(
@@ -768,6 +801,7 @@ class EventDrivenEngine:
         completed_trades: list[RoundTripTrade],
         open_positions: dict[str, RoundTripTrade],
         bench_start_price: float | None,
+        engine_stats: dict | None = None,   # NEW
     ) -> EventEngineResult:
         """Assemble the final EventEngineResult."""
         # Equity curve
@@ -812,4 +846,5 @@ class EventDrivenEngine:
             daily_returns=daily_returns,
             benchmark_returns=benchmark_returns,
             open_positions=list(open_positions.values()),
+            engine_stats=engine_stats or {},   # NEW
         )
