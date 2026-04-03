@@ -15,8 +15,11 @@ import argparse
 import json
 import logging
 import os
+import statistics
+import subprocess
 import sys
-from datetime import date
+import tempfile
+from datetime import date, datetime
 from pathlib import Path
 
 import anthropic
@@ -62,6 +65,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 PARQUET_DIR = STORAGE_PATH / "parquet"
+RESULTS_TSV_PATH = Path(__file__).parent.parent / "data" / "cache" / "results.tsv"
 
 
 # ── Batch analysis (pure Python, no LLM) ─────────────────────────────────────
@@ -464,6 +468,113 @@ def print_batch_summary(analysis: dict, batch_num: int) -> None:
             print(f"  - {r}")
 
 
+# ── Keep/revert helpers ───────────────────────────────────────────────────────
+
+
+def _get_batch_median_score(history: list[dict], last_n: int) -> float | None:
+    """Compute median composite score from the last N scored iterations."""
+    scored = [
+        e["score"]["score"]
+        for e in history[-last_n:]
+        if e.get("score") and e["score"].get("score") is not None
+    ]
+    if not scored:
+        return None
+    return statistics.median(scored)
+
+
+def _append_results_tsv(
+    shift_type: str,
+    pre_median: float | None,
+    post_median: float | None,
+    kept: bool,
+    rationale: str,
+    commit_hash: str = "none",
+) -> None:
+    """Append one result row to results.tsv, creating with header if needed."""
+    RESULTS_TSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not RESULTS_TSV_PATH.exists() or RESULTS_TSV_PATH.stat().st_size == 0
+    with open(RESULTS_TSV_PATH, "a", encoding="utf-8") as f:
+        if write_header:
+            f.write("timestamp\tshift_type\tpre_median\tpost_median\tkept\trationale\tcommit_hash\n")
+        ts = datetime.now().isoformat(timespec="seconds")
+        pre_str = f"{pre_median:.4f}" if pre_median is not None else "null"
+        post_str = f"{post_median:.4f}" if post_median is not None else "null"
+        rationale_clean = rationale.replace("\t", " ").replace("\n", " ")[:120]
+        f.write(
+            f"{ts}\t{shift_type}\t{pre_str}\t{post_str}\t"
+            f"{'yes' if kept else 'no'}\t{rationale_clean}\t{commit_hash}\n"
+        )
+
+
+def _write_system_prompt_to_disk(new_prompt: str, rationale: str = "") -> str | None:
+    """Atomically rewrite the SYSTEM_PROMPT block in alpha_gpt.py between boundary markers.
+
+    Uses write-to-temp + rename for atomicity. Returns short git commit hash or None.
+    """
+    alpha_gpt_path = Path(__file__).parent / "alpha_gpt.py"
+    try:
+        original = alpha_gpt_path.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.error(f"Could not read alpha_gpt.py for SYSTEM_PROMPT update: {e}")
+        return None
+
+    start_marker = "# === META-AGENT EDITABLE BLOCK START ==="
+    end_marker = "# === META-AGENT EDITABLE BLOCK END ==="
+
+    start_idx = original.find(start_marker)
+    end_idx = original.find(end_marker)
+
+    if start_idx == -1 or end_idx == -1:
+        logger.error(
+            "Boundary markers not found in alpha_gpt.py — cannot update SYSTEM_PROMPT on disk"
+        )
+        return None
+
+    # Build replacement block (preserve textwrap.dedent form)
+    new_block = (
+        f"{start_marker}\n"
+        f"SYSTEM_PROMPT = textwrap.dedent(\"\"\"\n"
+        f"{new_prompt}\n"
+        f"\"\"\").strip()\n"
+        f"{end_marker}"
+    )
+
+    updated = original[:start_idx] + new_block + original[end_idx + len(end_marker):]
+
+    # Atomic write: temp file then rename
+    tmp_path = alpha_gpt_path.with_suffix(".py.tmp")
+    try:
+        tmp_path.write_text(updated, encoding="utf-8")
+        tmp_path.rename(alpha_gpt_path)
+        logger.info(f"Updated SYSTEM_PROMPT on disk in {alpha_gpt_path.name}")
+    except Exception as e:
+        logger.error(f"Atomic write failed: {e}")
+        tmp_path.unlink(missing_ok=True)
+        return None
+
+    # Git commit
+    repo_root = alpha_gpt_path.parent.parent
+    rel_path = str(alpha_gpt_path.relative_to(repo_root))
+    commit_msg = f"meta: prompt_hint — {rationale[:60]}"
+    try:
+        subprocess.run(["git", "add", rel_path], cwd=repo_root, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=repo_root, check=True, capture_output=True,
+        )
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo_root, check=True, capture_output=True, text=True,
+        )
+        commit_hash = result.stdout.strip()
+        logger.info(f"Committed SYSTEM_PROMPT update: {commit_hash}")
+        return commit_hash
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Git commit failed: {e.stderr.decode() if e.stderr else e}")
+        return None
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 
@@ -589,6 +700,57 @@ def main() -> None:
 
         total_spent = len(load_history())
 
+        # --- Post-shift keep/revert check (runs on batch after a shift was applied) ---
+        pending = config.pop("_pending_revert_check", None)
+        if pending:
+            history_now = load_history()
+            if not pending.get("is_history_clear"):
+                post_median = _get_batch_median_score(history_now, args.batch_size)
+                pre_median = pending["pre_median"]
+                kept = (
+                    post_median is not None
+                    and pre_median is not None
+                    and post_median > pre_median
+                )
+                if not kept:
+                    logger.warning(
+                        f"Post-shift median ({post_median}) <= pre-shift ({pre_median})"
+                        " — reverting SYSTEM_PROMPT"
+                    )
+                    import scripts.alpha_gpt as agpt
+                    agpt.SYSTEM_PROMPT = pending["snapshot"]
+                else:
+                    logger.info(
+                        f"Post-shift median improved ({pre_median:.4f} → {post_median:.4f})"
+                        " — keeping change"
+                    )
+                # For kept prompt_hint shifts: write SYSTEM_PROMPT to disk and commit
+                commit_hash = "none"
+                if kept and pending["shift_type"] == "prompt_hint":
+                    import scripts.alpha_gpt as agpt
+                    commit_hash = _write_system_prompt_to_disk(
+                        agpt.SYSTEM_PROMPT, rationale=pending["rationale"]
+                    ) or "none"
+
+                _append_results_tsv(
+                    shift_type=pending["shift_type"],
+                    pre_median=pre_median,
+                    post_median=post_median,
+                    kept=kept,
+                    rationale=pending["rationale"],
+                    commit_hash=commit_hash,
+                )
+            else:
+                # history_clear: no baseline to compare — always log as kept
+                logger.info("history_clear shift: no revert possible, logging as kept")
+                _append_results_tsv(
+                    shift_type=pending["shift_type"],
+                    pre_median=pending["pre_median"],
+                    post_median=None,
+                    kept=True,
+                    rationale=pending["rationale"],
+                )
+
         if winner:
             print(f"\n{'='*60}")
             print(f"ALPHA FOUND after {total_spent} iterations!")
@@ -609,6 +771,14 @@ def main() -> None:
             if approved:
                 changes = proposal.get("config_changes", {})
                 logger.info(f"Applying: {changes}")
+
+                # --- Snapshot before applying: for keep/revert comparison ---
+                import scripts.alpha_gpt as agpt
+                _shift_snapshot = agpt.SYSTEM_PROMPT
+                _pre_median = _get_batch_median_score(history, args.batch_size)
+                _is_history_clear = bool(changes.get("clear_history"))
+                _shift_type = proposal.get("type", "unknown")
+                _shift_rationale = proposal.get("meta_rationale", proposal.get("description", ""))
 
                 if changes.get("universe") == "all":
                     universe = get_all_symbols()
@@ -643,6 +813,15 @@ def main() -> None:
                         return params
                     agpt.spec_to_run_params = _forced_monthly_params
                     logger.info("Forced monthly rebalance + max_holding >= 45d")
+
+                # Store pending revert check for next batch
+                config["_pending_revert_check"] = {
+                    "snapshot": _shift_snapshot,
+                    "pre_median": _pre_median,
+                    "shift_type": _shift_type,
+                    "rationale": _shift_rationale,
+                    "is_history_clear": _is_history_clear,
+                }
             else:
                 logger.info("Shift rejected — continuing with current config")
 
