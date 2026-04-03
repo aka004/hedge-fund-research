@@ -430,22 +430,23 @@ def run_single_iteration(
         History entry with keys: iteration, spec, score, diagnosis, timestamp, trace.
         Error paths return the same shape with empty score and diagnosis explaining the error.
     """
-    _error_entry = lambda diag, spec=None, raw=None, parse_err=None, bt_err=None: {
-        "iteration": iteration,
-        "spec": spec if spec is not None else {},
-        "score": {},
-        "diagnosis": diag,
-        "timestamp": datetime.now().isoformat(),
-        "trace": {
-            "raw_llm_response": raw,
-            "parse_error": parse_err,
-            "backtest_error": bt_err,
-            "cusum_entry_rate": None,
-            "meta_label_mean_prob": None,
-            "cost_drag_pct": None,
-            "exit_reason_breakdown": None,
-        },
-    }
+    def _error_entry(diag, *, spec=None, raw=None, parse_err=None, bt_err=None):
+        return {
+            "iteration": iteration,
+            "spec": spec if spec is not None else {},
+            "score": {},
+            "diagnosis": diag,
+            "timestamp": datetime.now().isoformat(),
+            "trace": {
+                "raw_llm_response": raw,
+                "parse_error": parse_err,
+                "backtest_error": bt_err,
+                "cusum_entry_rate": None,
+                "meta_label_mean_prob": None,
+                "cost_drag_pct": None,
+                "exit_reason_breakdown": None,
+            },
+        }
 
     # ── API key ──────────────────────────────────────────────────────────────
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -464,6 +465,7 @@ def run_single_iteration(
             messages=[{"role": "user", "content": user_msg}],
         )
         raw = response.content[0].text
+        logger.info(f"[iter {iteration}] LLM: {raw[:200]}{'...' if len(raw) > 200 else ''}")
     except Exception as e:
         return _error_entry(f"LLM call failed: {e}")
 
@@ -518,6 +520,7 @@ def run_single_iteration(
     )
 
     diag = diagnose(score)
+    logger.info(f"[iter {iteration}] {diag}")
 
     # ── Build entry dict ──────────────────────────────────────────────────────
     _engine_trace = (score.trace or {}) if score is not None else {}
