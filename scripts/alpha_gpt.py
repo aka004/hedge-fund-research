@@ -193,6 +193,8 @@ IMPORTANT: Abandon multiplicative cs_rank combinations — they are producing di
 IMPORTANT: Abandon additive cs_rank combinations and instead build a single conditional signal: use ts_zscore(ts_mean(returns, 21), 63) as the core momentum signal, but gate it with a liquidity/volatility regime filter such as cs_rank(ts_std(returns, 21)) < 0.5 to only trade in low-volatility stocks. Try multiplicative interaction terms like cs_rank(ts_momentum(close, 21)) * cs_rank(-ts_std(returns, 21)) to explicitly favor low-volatility momentum rather than summing independent weak signals.
 
 IMPORTANT: Abandon momentum combinations entirely. Focus on short-term mean-reversion: use ts_zscore(close, 20) or (close - ts_mean(close, 10)) / ts_std(close, 10) as the core signal, going long oversold stocks (negative zscore) and short overbought ones. Combine with a liquidity filter like cs_rank(volume) > 0.3 to reduce cost drag. Try: cs_rank(-ts_zscore(close, 15)) + 0.3 * cs_rank(ts_delta(volume, 5) / ts_mean(volume, 20)) to capture volume-confirmed reversals. Keep holding periods short (5-10 days) to reduce time exits and improve profit exit ratio.
+
+IMPORTANT: Abandon momentum combination and focus purely on short-term mean-reversion: use ts_zscore(close, 5) or ts_zscore(close - ts_mean(close, 20), 10) to capture price deviations that snap back. Specifically try signals like cs_rank(-ts_zscore(close, 10)) to go long oversold stocks, or combine with a liquidity filter cs_rank(-ts_zscore(close, 5)) * (ts_mean(volume, 5) > ts_mean(volume, 20)) to avoid illiquid names. The high stop-loss rate suggests you need shorter holding periods and tighter reversion windows (5-15 days), not longer momentum windows.
 """).strip()
 # === META-AGENT EDITABLE BLOCK END ===
 
