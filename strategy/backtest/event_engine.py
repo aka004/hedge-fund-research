@@ -34,6 +34,10 @@ class EventEngineConfig:
     use_cusum_gate: bool = True  # enable CUSUM entry gate
     use_regime_multiplier: bool = True  # enable 3-layer regime multiplier
     use_meta_labeling: bool = True  # enable rolling meta-label sizing
+    # Hard entry filter based on a regime detector.
+    # "vix"  — skip all new entries on days where VIX >= 18 (sideways/bear block).
+    # None   — no filter applied (default, fully backward-compatible).
+    regime_filter: str | None = None
 
 
 @dataclass
@@ -123,6 +127,22 @@ class EventDrivenEngine:
                 s.index = pd.to_datetime(s.index)
                 sentiment_series[col] = s
 
+        # VIX hard entry gate — build lookup series once at startup
+        _vix_series: pd.Series | None = None
+        if self.config.regime_filter == "vix" and sentiment_prices is not None:
+            sent_norm = self._normalize_index(sentiment_prices)
+            vix_col = "^VIX" if "^VIX" in sent_norm.columns else None
+            if vix_col:
+                _vix_series = sent_norm[vix_col].dropna()
+                logger.info(
+                    f"VIX hard entry gate active: {len(_vix_series)} VIX observations loaded"
+                )
+            else:
+                logger.warning(
+                    "regime_filter='vix' requested but ^VIX not found in sentiment_prices — "
+                    "gate will be inactive"
+                )
+
         # Meta-label state (retrained at each rebalance)
         meta_label_clf = None
 
@@ -143,6 +163,8 @@ class EventDrivenEngine:
         _cusum_total = 0      # total new signal candidates across all rebalances
         _cusum_passed = 0     # signals that cleared the CUSUM gate
         _meta_probs: list[float] = []  # P(win) collected per entry
+        _vix_rebalances_skipped = 0   # rebalance days blocked by VIX gate
+        _vix_rebalances_allowed = 0   # rebalance days allowed through VIX gate
 
         for today in trading_days:
             today_open = self._get_prices_for_date(open_prices, today)
@@ -180,6 +202,17 @@ class EventDrivenEngine:
 
             # --- Step B: If rebalance day, enter new positions at today's OPEN ---
             if today in rebalance_dates:
+                # Look up today's VIX level for the hard entry gate
+                vix_today: float | None = None
+                if _vix_series is not None:
+                    idx = _vix_series.index
+                    if today in idx:
+                        vix_today = float(_vix_series[today])
+                    else:
+                        prior = [d for d in idx if d <= today]
+                        if prior:
+                            vix_today = float(_vix_series[prior[-1]])
+
                 # Compute which symbols had upside CUSUM fire within recency window
                 if self.config.use_cusum_gate:
                     recency_cutoff = today - timedelta(
@@ -222,10 +255,13 @@ class EventDrivenEngine:
                     regime_mult=regime_mult,
                     meta_label_clf=meta_label_clf,
                     close_prices=close_prices,
+                    vix_today=vix_today,
                 )
                 _cusum_total += reb_stats["cusum_total"]
                 _cusum_passed += reb_stats["cusum_passed"]
                 _meta_probs.extend(reb_stats["meta_probs"])
+                _vix_rebalances_skipped += reb_stats.get("vix_rebalances_skipped", 0)
+                _vix_rebalances_allowed += reb_stats.get("vix_rebalances_allowed", 0)
 
             # --- Step C: Mark-to-market at today's CLOSE ---
             for symbol, trade in positions.items():
@@ -272,6 +308,14 @@ class EventDrivenEngine:
                 }
             )
 
+        if self.config.regime_filter == "vix" and (_vix_rebalances_skipped + _vix_rebalances_allowed) > 0:
+            total_reb = _vix_rebalances_skipped + _vix_rebalances_allowed
+            logger.info(
+                f"VIX gate summary: {_vix_rebalances_allowed}/{total_reb} rebalance days allowed "
+                f"({_vix_rebalances_allowed/total_reb*100:.0f}%), "
+                f"{_vix_rebalances_skipped} skipped (VIX >= 18)"
+            )
+
         return self._build_result(
             actual_start,
             actual_end,
@@ -283,6 +327,8 @@ class EventDrivenEngine:
                 "cusum_total": _cusum_total,
                 "cusum_passed": _cusum_passed,
                 "meta_probs": _meta_probs,
+                "vix_rebalances_skipped": _vix_rebalances_skipped,
+                "vix_rebalances_allowed": _vix_rebalances_allowed,
             },
         )
 
@@ -298,6 +344,7 @@ class EventDrivenEngine:
         regime_mult: float = 1.0,
         meta_label_clf=None,
         close_prices: pd.DataFrame | None = None,
+        vix_today: float | None = None,
     ) -> tuple[float, dict[str, RoundTripTrade], list[RoundTripTrade], dict]:
         """Process rebalance: exit stale, enter new. Returns (cash, positions, completed, stats)."""
         # Generate signals using data through YESTERDAY (no look-ahead)
@@ -329,6 +376,28 @@ class EventDrivenEngine:
                 completed_trades.append(trade)
                 del positions[symbol]
 
+        # --- VIX hard entry gate ---
+        # When regime_filter="vix", block all new entries on days where VIX >= 18.
+        # Existing positions are still managed (exits proceed above); only new entries
+        # are suppressed. This isolates alpha to low-volatility bull regime days.
+        if self.config.regime_filter == "vix" and vix_today is not None:
+            if vix_today >= 18.0:
+                logger.debug(
+                    f"{today}: VIX={vix_today:.1f} >= 18 — entry gate CLOSED, "
+                    f"skipping {len([s for s in signals if s.symbol not in positions])} new entries"
+                )
+                return cash, positions, completed_trades, {
+                    "cusum_total": 0,
+                    "cusum_passed": 0,
+                    "meta_probs": [],
+                    "vix_rebalances_skipped": 1,
+                    "vix_rebalances_allowed": 0,
+                }
+            else:
+                logger.debug(f"{today}: VIX={vix_today:.1f} < 18 — entry gate OPEN")
+
+        vix_allowed_stat = 1 if self.config.regime_filter == "vix" and vix_today is not None else 0
+
         # Enter new positions for symbols not already held
         new_symbols = [s for s in signals if s.symbol not in positions]
         if not new_symbols:
@@ -336,6 +405,8 @@ class EventDrivenEngine:
                 "cusum_total": 0,
                 "cusum_passed": 0,
                 "meta_probs": [],
+                "vix_rebalances_skipped": 0,
+                "vix_rebalances_allowed": vix_allowed_stat,
             }
 
         # Compute current equity for weight calculation
@@ -417,6 +488,8 @@ class EventDrivenEngine:
             "cusum_total": _reb_cusum_total,
             "cusum_passed": _reb_cusum_passed,
             "meta_probs": _reb_meta_probs,
+            "vix_rebalances_skipped": 0,
+            "vix_rebalances_allowed": vix_allowed_stat,
         }
 
     def _precompute_cusum(
