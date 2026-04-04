@@ -433,13 +433,16 @@ DIVERSITY_HINTS = {
 # ── Human interaction ─────────────────────────────────────────────────────────
 
 
-def ask_approval(proposal: dict) -> bool:
+def ask_approval(proposal: dict, auto_approve: bool = False) -> bool:
     """Ask the user to approve a strategy shift."""
     print(f"\n{'='*60}")
     print(f"STRATEGY SHIFT PROPOSED: {proposal['type']}")
     print(f"{'='*60}")
     print(proposal["description"])
     print()
+    if auto_approve:
+        print("Auto-approving (--auto-approve flag set).")
+        return True
     while True:
         answer = input("Approve this change? [y/n/q(uit)]: ").strip().lower()
         if answer in ("y", "yes"):
@@ -762,6 +765,8 @@ def main() -> None:
                     help="Seconds before killing a worker (default: 300)")
     ap.add_argument("--no-parallel", action="store_true",
                     help="Disable parallelism, run sequentially (original behavior)")
+    ap.add_argument("--auto-approve", action="store_true",
+                    help="Auto-approve all meta-agent strategy shift proposals without prompting")
     args = ap.parse_args()
 
     # ── Universe ──────────────────────────────────────────────────────────
@@ -985,7 +990,7 @@ def main() -> None:
         # ── Check for strategy shift ──────────────────────────────────────
         proposal = propose_strategy_shift(analysis, config)
         if proposal:
-            approved = ask_approval(proposal)
+            approved = ask_approval(proposal, auto_approve=args.auto_approve)
             if approved:
                 changes = proposal.get("config_changes", {})
                 logger.info(f"Applying: {changes}")
