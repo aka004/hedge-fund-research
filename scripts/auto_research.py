@@ -270,6 +270,7 @@ def run_config(
     parquet_storage,
     combiner=None,  # optional SignalCombiner override (used by AlphaGPT)
     n_strategies_tested: int = 1,  # cumulative count for DSR correction
+    regime_filter: str | None = None,  # "vix" = hard VIX < 18 entry gate; None = off
 ) -> RunScore:
     config_id = params["label"]
     logger.info(f"  Running: {config_id}")
@@ -305,6 +306,7 @@ def run_config(
         use_cusum_gate=params["use_cusum_gate"],
         use_regime_multiplier=params["use_regime"],
         use_meta_labeling=params["use_meta"],
+        regime_filter=regime_filter,
     )
 
     # Use provided combiner (AlphaGPT) or default momentum-only combiner

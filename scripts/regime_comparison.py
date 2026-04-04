@@ -165,12 +165,14 @@ def run_strategy(
     macro_prices,
     sentiment_prices,
     n_strategies_tested: int = 3,
+    regime_filter: str | None = None,
 ) -> RunScore | None:
     """Run a single strategy backtest and return RunScore (with daily_returns)."""
     from strategy.signals.combiner import SignalCombiner
     from strategy.signals.expression import ExpressionSignal
 
-    logger.info(f"Running backtest: {strat['label']}")
+    label = strat["label"] + (" [VIX gate ON]" if regime_filter == "vix" else "")
+    logger.info(f"Running backtest: {label}")
     combiner = SignalCombiner([ExpressionSignal(expression=strat["expression"], ohlcv=ohlcv)])
 
     params = {
@@ -203,6 +205,7 @@ def run_strategy(
             parquet_storage=None,
             combiner=combiner,
             n_strategies_tested=n_strategies_tested,
+            regime_filter=regime_filter,
         )
         logger.info(
             f"  {strat['label']}: Sharpe={score.sharpe:.3f}  "
@@ -423,6 +426,61 @@ def build_markdown(
     return "\n".join(lines)
 
 
+def build_vix_gate_section(filtered_results: list[dict]) -> str:
+    """Build the VIX hard gate comparison section appended to the main report."""
+    lines = [
+        "",
+        "---",
+        "",
+        "## VIX Hard Gate (regime_filter='vix') — Unfiltered vs Filtered Comparison",
+        "",
+        "_Re-run with `regime_filter='vix'`: entries blocked on days where VIX >= 18._",
+        "_All other parameters identical to the unfiltered runs above._",
+        "",
+        "| Strategy | Mode | Sharpe | CAGR | Max DD | N Trades | PSR | Passed |",
+        "|----------|------|--------|------|--------|----------|-----|--------|",
+    ]
+    for row in filtered_results:
+        lines.append(
+            f"| {row['label']} "
+            f"| {row['mode']} "
+            f"| {row['sharpe']:.3f} "
+            f"| {row['cagr']:.1f}% "
+            f"| {row['max_dd']:.1f}% "
+            f"| {row['n_trades']} "
+            f"| {row['psr']:.3f} "
+            f"| {'✅' if row['passed'] else '❌'} |"
+        )
+
+    lines += [
+        "",
+        "### Key Observations",
+        "",
+    ]
+    # Auto-generate per-strategy delta observations
+    strats_seen = {}
+    for row in filtered_results:
+        strats_seen.setdefault(row["label"], {})[row["mode"]] = row
+    for label, modes in strats_seen.items():
+        if "Unfiltered" in modes and "VIX gate ON" in modes:
+            base = modes["Unfiltered"]
+            gated = modes["VIX gate ON"]
+            sharpe_delta = gated["sharpe"] - base["sharpe"]
+            cagr_delta = gated["cagr"] - base["cagr"]
+            dd_delta = gated["max_dd"] - base["max_dd"]
+            trade_delta = gated["n_trades"] - base["n_trades"]
+            lines.append(
+                f"- **{label}**: Sharpe {base['sharpe']:.3f} → {gated['sharpe']:.3f} "
+                f"({sharpe_delta:+.3f}), CAGR {base['cagr']:.1f}% → {gated['cagr']:.1f}% "
+                f"({cagr_delta:+.1f}%), Max DD {base['max_dd']:.1f}% → {gated['max_dd']:.1f}% "
+                f"({dd_delta:+.1f}%), Trades: {base['n_trades']} → {gated['n_trades']} "
+                f"({trade_delta:+d})"
+            )
+
+    lines += ["", f"_Source: `scripts/regime_comparison.py` (VIX gate section)_", ""]
+    return "\n".join(lines)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -453,7 +511,7 @@ def main() -> None:
     logger.info(f"VIX regime distribution: {regime_distribution['VIX']}")
     logger.info(f"HMM regime distribution: {regime_distribution['HMM']}")
 
-    # 3. Run backtests for each strategy
+    # 3. Run unfiltered backtests + collect conditional regime stats
     all_results = []
     for strat in STRATEGIES:
         score = run_strategy(
@@ -470,7 +528,6 @@ def main() -> None:
             continue
 
         daily_rets = score.daily_returns
-        # Ensure datetime index for alignment
         if not isinstance(daily_rets.index, pd.DatetimeIndex):
             daily_rets.index = pd.to_datetime(daily_rets.index)
 
@@ -478,11 +535,7 @@ def main() -> None:
         for det_name, regime_series in [("VIX", vix_regimes), ("HMM", hmm_regimes)]:
             for regime_int, regime_name in [(0, "bear"), (1, "sideways"), (2, "bull")]:
                 stats = conditional_stats(daily_rets, regime_series, regime_int)
-                rows.append({
-                    "detector": det_name,
-                    "regime_name": regime_name,
-                    **stats,
-                })
+                rows.append({"detector": det_name, "regime_name": regime_name, **stats})
                 logger.info(
                     f"  {strat['id']} | {det_name} | {regime_name}: "
                     f"n={stats['n_days']}  Sharpe={stats['sharpe']:.3f}  "
@@ -492,24 +545,68 @@ def main() -> None:
         all_results.append({
             "strategy": strat,
             "full_period": {
-                "sharpe": score.sharpe,
-                "cagr": score.cagr,
-                "max_dd": score.max_dd,
-                "psr": score.psr,
-                "passed": score.passed,
+                "sharpe": score.sharpe, "cagr": score.cagr, "max_dd": score.max_dd,
+                "psr": score.psr, "passed": score.passed,
+                "n_trades": score.total_trades,
             },
             "rows": rows,
         })
 
-    # 4. Write output
+    # 4. Run VIX-gated backtests for comparison table
+    logger.info("=== Re-running with VIX hard gate ON ===")
+    filtered_rows: list[dict] = []
+    for strat in STRATEGIES:
+        # Unfiltered row (already have from above)
+        base = next((r for r in all_results if r["strategy"]["id"] == strat["id"]), None)
+        if base:
+            filtered_rows.append({
+                "label": strat["label"],
+                "mode": "Unfiltered",
+                "sharpe": base["full_period"]["sharpe"],
+                "cagr": base["full_period"]["cagr"],
+                "max_dd": base["full_period"]["max_dd"],
+                "n_trades": base["full_period"]["n_trades"],
+                "psr": base["full_period"]["psr"],
+                "passed": base["full_period"]["passed"],
+            })
+
+        # VIX-gated run
+        score_gated = run_strategy(
+            strat=strat,
+            universe=universe,
+            close_prices=close_prices,
+            open_prices=open_prices,
+            ohlcv=ohlcv,
+            macro_prices=macro_prices,
+            sentiment_prices=sentiment_prices,
+            regime_filter="vix",
+        )
+        if score_gated is not None:
+            logger.info(
+                f"  VIX-gated {strat['label']}: Sharpe={score_gated.sharpe:.3f}  "
+                f"CAGR={score_gated.cagr:.1f}%  MaxDD={score_gated.max_dd:.1f}%  "
+                f"Trades={score_gated.total_trades}"
+            )
+            filtered_rows.append({
+                "label": strat["label"],
+                "mode": "VIX gate ON",
+                "sharpe": score_gated.sharpe,
+                "cagr": score_gated.cagr,
+                "max_dd": score_gated.max_dd,
+                "n_trades": score_gated.total_trades,
+                "psr": score_gated.psr,
+                "passed": score_gated.passed,
+            })
+
+    # 5. Build and write output
     md = build_markdown(all_results, regime_distribution)
+    md += build_vix_gate_section(filtered_rows)
 
     out_path = STORAGE_PATH / "regime_comparison.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(md)
     logger.info(f"Written: {out_path}")
 
-    # Obsidian copy
     obsidian_path = Path(
         "/Users/a004/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian"
         "/Research/AlphaGPT-Runs/regime_detector_comparison.md"
