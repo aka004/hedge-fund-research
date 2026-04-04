@@ -599,6 +599,12 @@ def run_single_iteration(
     diag = diagnose(score)
     logger.info(f"[iter {iteration}] {diag}")
 
+    # ── Zero-trade detection ──────────────────────────────────────────────────
+    # Zero-trade results indicate the expression produced no valid signals (all
+    # NaN or zero after normalization). Tag them so the orchestrator can skip
+    # counting them against the iteration budget.
+    zero_trades = score.total_trades == 0
+
     # ── Build entry dict ──────────────────────────────────────────────────────
     _engine_trace = (score.trace or {}) if score is not None else {}
     entry = {
@@ -622,8 +628,14 @@ def run_single_iteration(
             "meta_label_mean_prob": _engine_trace.get("meta_label_mean_prob"),
             "cost_drag_pct": _engine_trace.get("cost_drag_pct"),
             "exit_reason_breakdown": _engine_trace.get("exit_reason_breakdown"),
+            "error": "zero_trades" if zero_trades else None,
         },
     }
+    if zero_trades:
+        logger.warning(
+            f"[iter {iteration}] Zero trades — expression produced no signals. "
+            f"Will NOT count against iteration budget."
+        )
 
     # ── CPCV gate for winners ─────────────────────────────────────────────────
     if score.psr >= PSR_TARGET and score.passed:

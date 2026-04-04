@@ -408,15 +408,17 @@ def run_config(
         trade_log=result.trade_log if not result.trade_log.empty else None,
     )
 
-    # PSR with cumulative multiple-testing correction (Bailey & López de Prado).
-    # n_strategies_tested should be the total number of strategies evaluated
-    # across all sessions to properly correct for p-hacking during discovery.
+    # In-run screening PSR: P(true SR > 0) with no multiple-testing correction.
+    # Using n_strategies_tested=1 (benchmark = 0) keeps PSR meaningful throughout
+    # the discovery loop — expected_max_sharpe(N) inflates the benchmark to ~2.5+
+    # for N>100, collapsing PSR to 0.000 for every strategy regardless of quality.
+    # The CPCV gate (below) handles selection-bias correction with proper N.
     psr_val = 0.0
     if len(result.daily_returns) >= 252:
         try:
             psr_res = deflated_sharpe(
                 result.daily_returns.values,
-                n_strategies_tested=max(1, n_strategies_tested),
+                n_strategies_tested=1,
             )
             psr_val = psr_res.psr
         except Exception:

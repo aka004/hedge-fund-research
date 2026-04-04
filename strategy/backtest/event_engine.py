@@ -447,11 +447,14 @@ class EventDrivenEngine:
                 else 0.5
             )
 
-            # Cap at max_position_weight, then apply regime_mult and meta_prob
+            # Cap at max_position_weight, then apply regime_mult and meta_prob.
+            # Cap combined multiplier at 1.0 to prevent leverage: regime_mult ≤ 1
+            # and meta_prob ∈ [0,1], but meta_prob*2 would create 2× leverage at
+            # high confidence. Capping at 1.0 ensures no position exceeds its
+            # target weight, keeping CAGR on normalized (not leveraged) returns.
             capped_weight = min(weight, self.config.max_position_weight)
-            target_value = (
-                capped_weight * current_equity * regime_mult * (meta_prob * 2)
-            )
+            combined_mult = min(regime_mult * (meta_prob * 2), 1.0)
+            target_value = capped_weight * current_equity * combined_mult
             price = today_open[symbol]
 
             if price <= 0:

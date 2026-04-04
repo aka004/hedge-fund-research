@@ -28,6 +28,47 @@ def test_psr_benchmark_not_deflated_by_annualization():
     )
 
 
+def test_psr_in_run_screening():
+    """In-run screening PSR (n_strategies=1) must be clearly between 0 and 1.
+
+    Regression test: n_strategies_tested=100 inflates the DSR benchmark to
+    ~2.53 via expected_max_sharpe(100), giving PSR=0.000 for any realistic
+    strategy. The fix passes n_strategies=1 for screening so PSR = P(SR > 0).
+
+    Spec: Sharpe=1.0, n_strategies=100, T=252, sr_std≈0.2 → PSR must be
+    clearly > 0 when using n_strategies=1 (screening mode).
+    """
+    rng = np.random.default_rng(0)
+    # Construct T=252 daily returns with annualized Sharpe ≈ 1.0
+    # daily_mean = sr / sqrt(252) * daily_std; set daily_std = 0.02 (2%/day)
+    daily_std = 0.02
+    daily_mean = 1.0 / np.sqrt(252) * daily_std  # ≈ 0.00126
+    returns = rng.normal(daily_mean, daily_std, 252)
+
+    # --- Screening mode (n=1): PSR should be meaningful (clearly > 0, NOT 0.000) ---
+    result_screen = deflated_sharpe(returns, n_strategies_tested=1)
+    assert result_screen.psr > 0.5, (
+        f"Screening PSR should be > 0.5 for Sharpe~1.0 strategy, got {result_screen.psr:.4f}. "
+        f"If PSR=0.000 the n_strategies_tested inflation bug has returned."
+    )
+
+    # --- Legacy mode (n=100): DSR benchmark is high, PSR collapses toward 0 ---
+    result_dsr = deflated_sharpe(returns, n_strategies_tested=100)
+    assert result_dsr.psr < result_screen.psr, (
+        f"DSR(n=100) PSR {result_dsr.psr:.4f} should be < screening PSR {result_screen.psr:.4f}"
+    )
+
+    # --- Confirm the root cause: expected_max_sharpe(100) >> Sharpe=1.0 ---
+    from afml.metrics import expected_max_sharpe
+    benchmark_100 = expected_max_sharpe(100)
+    assert benchmark_100 > 2.0, (
+        f"expected_max_sharpe(100) should exceed 2.0, got {benchmark_100:.4f}"
+    )
+    assert result_screen.sharpe < benchmark_100, (
+        "Confirms Sharpe=1.0 cannot beat the DSR benchmark of 2.5+ with n=100"
+    )
+
+
 def test_expected_max_sharpe_standalone():
     """expected_max_sharpe() should exist as a standalone function."""
     from afml.metrics import expected_max_sharpe

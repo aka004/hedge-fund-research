@@ -951,7 +951,22 @@ def main() -> None:
                     break
 
         total_spent = len(load_history())
-        global_iterations += this_batch
+
+        # Don't count zero-trade iterations against budget — they wasted a worker
+        # slot but produced no signal information. Expression goes into history so
+        # the fingerprint exclusion list still sees it.
+        zero_trade_count = 0
+        if not args.no_parallel:
+            zero_trade_count = sum(
+                1 for e in entries
+                if (e.get("trace") or {}).get("error") == "zero_trades"
+            )
+            if zero_trade_count:
+                logger.info(
+                    f"Batch had {zero_trade_count} zero-trade iteration(s) — "
+                    f"not counted against budget"
+                )
+        global_iterations += this_batch - zero_trade_count
 
         # --- Post-shift keep/revert check (runs on batch after a shift was applied) ---
         pending = config.pop("_pending_revert_check", None)
