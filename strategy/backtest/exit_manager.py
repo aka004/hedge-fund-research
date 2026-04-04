@@ -30,13 +30,17 @@ class ExitConfig:
 class ExitManager:
     """Checks open positions daily and emits ExitSignals when barriers are breached.
 
-    Barrier computation:
+    Barrier computation (ATR mode, default):
+        upper = entry_price + atr_multiplier * atr_20
+        lower = entry_price - atr_multiplier * atr_20
+
+    Barrier computation (vol fallback, when ATR unavailable):
         upper = entry_price * (1 + profit_take_mult * current_daily_vol)
         lower = entry_price * (1 - stop_loss_mult * current_daily_vol)
 
-    Barriers are recomputed daily using rolling vol (not frozen at entry).
+    Barriers are recomputed daily using rolling values (not frozen at entry).
 
-    Check priority: profit target > stop loss > timeout.
+    Check priority: profit target > cusum_reversal > stop loss > timeout.
     If a volatile day touches both barriers, profit target wins.
     """
 
@@ -50,6 +54,8 @@ class ExitManager:
         prices: dict[str, float],
         vol: dict[str, float],
         cusum_downside: set[str] | None = None,
+        atr: dict[str, float] | None = None,
+        atr_multiplier: float = 0.0,
     ) -> list[ExitSignal]:
         """Check all open positions for barrier breaches.
 
@@ -57,8 +63,11 @@ class ExitManager:
             positions: Currently open positions keyed by symbol.
             today: Current date (close of day).
             prices: Today's close prices per symbol.
-            vol: Today's daily volatility per symbol.
+            vol: Today's daily volatility per symbol (used as fallback).
             cusum_downside: Symbols where downside CUSUM fired today.
+            atr: Today's 20-day ATR (high-low range) per symbol. When provided
+                and atr_multiplier > 0, ATR-scaled barriers replace vol-based barriers.
+            atr_multiplier: Multiplier applied to ATR for barrier width.
 
         Returns:
             List of ExitSignals for positions that breached a barrier.
@@ -67,6 +76,8 @@ class ExitManager:
         """
         if cusum_downside is None:
             cusum_downside = set()
+        if atr is None:
+            atr = {}
 
         signals: list[ExitSignal] = []
 
@@ -75,11 +86,17 @@ class ExitManager:
                 continue
 
             close_price = prices[symbol]
-            daily_vol = vol.get(symbol, 0.0)
 
-            # Compute dynamic barriers
-            upper = trade.entry_price * (1.0 + self.config.profit_take_mult * daily_vol)
-            lower = trade.entry_price * (1.0 - self.config.stop_loss_mult * daily_vol)
+            # Compute dynamic barriers: ATR-scaled when available, vol-based as fallback
+            atr_val = atr.get(symbol, 0.0)
+            if atr_multiplier > 0 and atr_val > 0:
+                barrier_distance = atr_multiplier * atr_val
+                upper = trade.entry_price + barrier_distance
+                lower = trade.entry_price - barrier_distance
+            else:
+                daily_vol = vol.get(symbol, 0.0)
+                upper = trade.entry_price * (1.0 + self.config.profit_take_mult * daily_vol)
+                lower = trade.entry_price * (1.0 - self.config.stop_loss_mult * daily_vol)
 
             # Check order: profit_target > cusum_reversal > stop_loss > timeout
             if close_price >= upper:

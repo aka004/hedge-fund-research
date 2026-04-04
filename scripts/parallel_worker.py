@@ -126,6 +126,7 @@ def worker_fn(args: dict) -> None:
             regime_filter=args.get("regime_filter"),
             universe_name=args.get("universe_name", "sp500"),
             benchmark_symbol=args.get("benchmark_symbol", "SPY"),
+            atr_multiplier=args.get("atr_multiplier", 1.5),
         )
     except Exception as exc:
         import traceback

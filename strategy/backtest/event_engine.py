@@ -38,6 +38,9 @@ class EventEngineConfig:
     # "vix"  — skip all new entries on days where VIX >= 28 (sideways/bear block).
     # None   — no filter applied (default, fully backward-compatible).
     regime_filter: str | None = None
+    # ATR-scaled barriers: multiplier applied to 20-day ATR for take-profit and stop-loss.
+    # Set to 0.0 to fall back to vol-based barriers (backward-compatible default).
+    atr_multiplier: float = 1.5
 
 
 @dataclass
@@ -76,6 +79,8 @@ class EventDrivenEngine:
         sentiment_prices: pd.DataFrame | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        high_prices: pd.DataFrame | None = None,
+        low_prices: pd.DataFrame | None = None,
     ) -> EventEngineResult:
         """Run event-driven backtest over the given price data."""
         close_prices = self._normalize_index(close_prices)
@@ -98,6 +103,19 @@ class EventDrivenEngine:
         # Compute daily vol (EWMA of returns)
         returns = close_prices.ffill().pct_change()
         daily_vol = returns.ewm(span=self.config.exit_config.vol_window).std()
+
+        # Compute 20-day ATR (simple average of high-low range) when OHLCV available
+        atr_df: pd.DataFrame | None = None
+        if (
+            self.config.atr_multiplier > 0
+            and high_prices is not None
+            and low_prices is not None
+        ):
+            _h = self._normalize_index(high_prices)
+            _l = self._normalize_index(low_prices)
+            # Align to close_prices columns to avoid spurious symbols
+            shared_cols = _h.columns.intersection(_l.columns).intersection(close_prices.columns)
+            atr_df = (_h[shared_cols] - _l[shared_cols]).rolling(20, min_periods=5).mean()
 
         # Compute rebalance dates
         rebalance_dates = self._get_rebalance_dates(trading_days)
@@ -173,6 +191,7 @@ class EventDrivenEngine:
             today_open = self._get_prices_for_date(open_prices, today)
             today_close = self._get_prices_for_date(close_prices, today)
             today_vol = self._get_vol_for_date(daily_vol, today)
+            today_atr = self._get_vol_for_date(atr_df, today) if atr_df is not None else {}
 
             # --- Step A: Execute yesterday's queued exits at today's OPEN ---
             remaining_exits: list[ExitSignal] = []
@@ -287,6 +306,8 @@ class EventDrivenEngine:
                 today_close,
                 today_vol,
                 cusum_downside=today_downside,
+                atr=today_atr,
+                atr_multiplier=self.config.atr_multiplier,
             )
             pending_exits.extend(new_exits)
 

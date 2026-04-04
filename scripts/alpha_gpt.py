@@ -491,6 +491,7 @@ def run_single_iteration(
     regime_filter: str | None = None,
     universe_name: str = "sp500",
     benchmark_symbol: str = "SPY",
+    atr_multiplier: float = 1.5,
 ) -> dict:
     """Run a single AlphaGPT iteration and return a history entry dict.
 
@@ -620,6 +621,8 @@ def run_single_iteration(
         n_strategies_tested=n_strategies_tested,
         regime_filter=regime_filter,
         benchmark_symbol=benchmark_symbol,
+        atr_multiplier=atr_multiplier,
+        ohlcv=ohlcv,
     )
 
     diag = diagnose(score)

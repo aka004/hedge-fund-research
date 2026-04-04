@@ -614,6 +614,7 @@ def _run_batch_parallel(
     regime_filter: str | None = None,
     universe_name: str = "sp500",
     benchmark_symbol: str = "SPY",
+    atr_multiplier: float = 1.5,
 ) -> list[dict]:
     """Run a batch of AlphaGPT iterations in parallel using ProcessPoolExecutor.
 
@@ -668,6 +669,7 @@ def _run_batch_parallel(
             "regime_filter": regime_filter,
             "universe_name": universe_name,
             "benchmark_symbol": benchmark_symbol,
+            "atr_multiplier": atr_multiplier,
         })
 
     results: list[dict] = []
@@ -798,6 +800,8 @@ def main() -> None:
                     help="Auto-approve all meta-agent strategy shift proposals without prompting")
     ap.add_argument("--regime-filter", default=None, choices=["vix"],
                     help="Hard entry gate: 'vix' blocks entries when VIX >= 28 (default: off)")
+    ap.add_argument("--atr-multiplier", type=float, default=1.5,
+                    help="ATR multiplier for barrier width (default: 1.5). Set 0 to use vol-based barriers.")
     ap.add_argument(
         "--universe-name", default="sp500",
         choices=["sp500", "russell2000_tech"],
@@ -935,6 +939,7 @@ def main() -> None:
                 regime_filter=args.regime_filter,
                 universe_name=args.universe_name,
                 benchmark_symbol=universe_cfg.benchmark,
+                atr_multiplier=args.atr_multiplier,
             )
 
             # Main process owns the history file — workers never write to it

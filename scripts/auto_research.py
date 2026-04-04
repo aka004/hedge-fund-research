@@ -272,6 +272,8 @@ def run_config(
     n_strategies_tested: int = 1,  # cumulative count for DSR correction
     regime_filter: str | None = None,  # "vix" = hard VIX < 18 entry gate; None = off
     benchmark_symbol: str = "SPY",
+    atr_multiplier: float = 1.5,
+    ohlcv: dict | None = None,  # {"high": DataFrame, "low": DataFrame, ...}
 ) -> RunScore:
     config_id = params["label"]
     logger.info(f"  Running: {config_id}")
@@ -309,6 +311,7 @@ def run_config(
         use_meta_labeling=params["use_meta"],
         regime_filter=regime_filter,
         benchmark_symbol=benchmark_symbol,
+        atr_multiplier=atr_multiplier,
     )
 
     # Use provided combiner (AlphaGPT) or default momentum-only combiner
@@ -334,6 +337,8 @@ def run_config(
                 if sentiment_prices is not None and not sentiment_prices.empty
                 else None
             ),
+            high_prices=ohlcv.get("high") if ohlcv else None,
+            low_prices=ohlcv.get("low") if ohlcv else None,
         )
     except Exception as e:
         logger.error(f"    FAILED: {e}")
