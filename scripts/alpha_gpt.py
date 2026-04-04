@@ -211,6 +211,8 @@ IMPORTANT: Abandon momentum combination entirely and focus on short-term mean-re
 IMPORTANT: Abandon momentum combination approach entirely. Focus on short-term mean-reversion using ts_zscore: e.g., cs_rank(-ts_zscore(close, 10)) to fade recent moves, or cs_rank(-ts_zscore(returns, 5)) + cs_rank(ts_zscore(volume, 20)) to combine price reversal with volume normalization. Use short windows (5-21 days) and ensure the signal is negatively correlated with recent returns to exploit mean-reversion rather than momentum.
 
 IMPORTANT: Abandon momentum combination and pivot to pure mean-reversion: use cs_rank(-(close / ts_min(close, 21) - 1)) or cs_rank(ts_zscore(returns, 63)) to fade recent losers back to mean. Pair with a liquidity filter like cs_rank(ts_mean(volume, 21)) to avoid illiquid names. Target holding periods of 5-10 days by using shorter ts_* windows (5-21 days) rather than 63-252 day windows that have been consistently failing.
+
+IMPORTANT: Abandon the upside/downside variance ratio pattern entirely. Focus on low-turnover value-momentum combinations using ts_zscore over long windows (63-252 days) applied to fundamental ratios like earnings_yield and book_to_price, combined with a single clean price momentum signal like cs_rank(ts_returns(close, 126)). Avoid complex nested expressions — use simple additive combinations of 2-3 well-understood factors, each individually cs_rank normalized, to reduce noise and stop-loss exits.
 """).strip()
 # === META-AGENT EDITABLE BLOCK END ===
 
