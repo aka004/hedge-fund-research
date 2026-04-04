@@ -821,16 +821,19 @@ def main() -> None:
 
     # ── Batch loop ────────────────────────────────────────────────────────
     total_spent = len(load_history())
+    # global_iterations counts all iterations ever run, never resets on history_clear.
+    # This ensures the budget is a hard cap regardless of how many times history is cleared.
+    global_iterations = 0
     batch_num = 0
 
-    while total_spent < args.budget:
+    while global_iterations < args.budget:
         batch_num += 1
-        remaining = args.budget - total_spent
+        remaining = args.budget - global_iterations
         this_batch = min(args.batch_size, remaining)
 
         print(f"\n{'='*60}")
         print(f"BATCH {batch_num}: Running {this_batch} iterations "
-              f"({total_spent}/{args.budget} spent)")
+              f"({global_iterations}/{args.budget} global | {total_spent} in current history)")
         print(f"Universe: {len(available)} symbols | Model: {config['model']}")
         print(f"{'='*60}\n")
 
@@ -922,6 +925,7 @@ def main() -> None:
                     break
 
         total_spent = len(load_history())
+        global_iterations += this_batch
 
         # --- Post-shift keep/revert check (runs on batch after a shift was applied) ---
         pending = config.pop("_pending_revert_check", None)
@@ -1051,7 +1055,7 @@ def main() -> None:
     history = load_history()
     analysis = analyze_batch(history)
     print(f"\n{'='*60}")
-    print(f"BUDGET EXHAUSTED ({args.budget} iterations)")
+    print(f"BUDGET EXHAUSTED ({global_iterations} global iterations, budget={args.budget})")
     print(f"{'='*60}")
     print_batch_summary(analysis, "FINAL")
 
