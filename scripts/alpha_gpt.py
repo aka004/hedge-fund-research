@@ -197,6 +197,8 @@ IMPORTANT: Abandon momentum combinations entirely. Focus on short-term mean-reve
 IMPORTANT: Abandon momentum combination and focus purely on short-term mean-reversion: use ts_zscore(close, 5) or ts_zscore(close - ts_mean(close, 20), 10) to capture price deviations that snap back. Specifically try signals like cs_rank(-ts_zscore(close, 10)) to go long oversold stocks, or combine with a liquidity filter cs_rank(-ts_zscore(close, 5)) * (ts_mean(volume, 5) > ts_mean(volume, 20)) to avoid illiquid names. The high stop-loss rate suggests you need shorter holding periods and tighter reversion windows (5-15 days), not longer momentum windows.
 
 IMPORTANT: Abandon additive cs_rank combinations and instead focus on conditional/interaction signals: use ts_zscore to filter only high-conviction setups, e.g. only rank stocks when ts_zscore(volume, 21) > 1.0 (volume confirmation), and target mean-reversion by using cs_rank(-ts_zscore(close, 5)) * (cs_rank(ts_zscore(close, 63)) > 0.7) to buy short-term oversold names within intermediate uptrends. Reduce turnover by using longer rebalance signals (63-126 day windows) and avoid high-frequency price/volume ratio signals that generate excessive cost drag.
+
+IMPORTANT: Abandon momentum+value combinations entirely. Pivot to mean-reversion using short-term price dislocations: try cs_rank(-ts_zscore(close, 5)) or cs_rank(-(close / ts_min(close, 10) - 1)) to capture short-term oversold bounces. Combine with a liquidity filter like cs_rank(ts_mean(volume, 20)) to avoid illiquid names. Use holding periods of 3-10 days rather than the current longer-term signals that are generating excessive stop-outs.
 """).strip()
 # === META-AGENT EDITABLE BLOCK END ===
 
