@@ -92,7 +92,7 @@ class EventDrivenEngine:
         actual_end = trading_days[-1]
 
         # Compute daily vol (EWMA of returns)
-        returns = close_prices.pct_change()
+        returns = close_prices.ffill().pct_change()
         daily_vol = returns.ewm(span=self.config.exit_config.vol_window).std()
 
         # Compute rebalance dates

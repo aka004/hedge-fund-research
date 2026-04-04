@@ -6,7 +6,9 @@ by ProcessPoolExecutor with spawn context.
 
 import json
 import logging
+import random
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -91,8 +93,16 @@ def worker_fn(args: dict) -> None:
 
     _set_resource_limits(memory_gb=2)
 
+    # Stagger startup to avoid parquet read race conditions when multiple
+    # workers spawn simultaneously and all try to read the same files at once.
+    jitter = random.uniform(0.0, 1.0)
+    time.sleep(jitter)
+
     iteration = args["iteration"]
     output_path = args["output_path"]
+    archetype = args.get("archetype")
+    temperature = args.get("temperature", 1.0)
+    logger.info(f"Worker {iteration} | archetype={archetype} | temperature={temperature:.1f}")
 
     try:
         from scripts.alpha_gpt import run_single_iteration
@@ -111,6 +121,8 @@ def worker_fn(args: dict) -> None:
             model=args["model"],
             n_strategies_tested=args["n_strategies_tested"],
             system_prompt=args.get("system_prompt"),
+            archetype=args.get("archetype"),
+            temperature=args.get("temperature", 1.0),
         )
     except Exception as exc:
         import traceback

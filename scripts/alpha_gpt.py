@@ -183,6 +183,8 @@ on a stock×time matrix and backtested. You receive performance feedback and ite
 - ts_skew(returns, 63) detects crash-prone vs lottery-ticket stocks
 - ts_zscore(close, 63) = how extreme is today vs recent history
 - cs_demean() removes market-level effects without ranking
+
+IMPORTANT: Abandon short-window momentum (21-day returns) entirely. Instead, explore mean-reversion using ts_zscore(close, 20) negated (i.e., fade recent moves), or use volatility-adjusted signals like cs_rank(ts_returns(close, 126) / ts_std(close, 63)) to capture risk-adjusted momentum at medium horizons. Reduce trade frequency by using longer lookbacks (63-252 days only) and combine with cs_rank(earnings_yield) as a quality filter to avoid low-quality reversal traps.
 """).strip()
 # === META-AGENT EDITABLE BLOCK END ===
 
@@ -273,12 +275,53 @@ def validate_winner_cpcv(
 # ── Build user message ────────────────────────────────────────────────────────
 
 
-def build_user_message(history: list[dict]) -> str:
+def _extract_fingerprints(history: list[dict]) -> list[str]:
+    """Extract operator fingerprints from recent history for the exclusion list.
+
+    A fingerprint is the set of top-level operator calls in an expression,
+    e.g. "cs_rank(ts_returns(...))" → "cs_rank+ts_returns".
+    Returns deduplicated fingerprints with their best Sharpe for context.
+    """
+    import re
+    seen: dict[str, float] = {}  # fingerprint → best sharpe
+    for entry in history[-20:]:
+        expr = entry.get("spec", {}).get("expression", "")
+        if not expr:
+            continue
+        # Extract ts_/cs_ operator names from the expression
+        ops = re.findall(r'\b(ts_\w+|cs_\w+)\b', expr)
+        if ops:
+            fp = "+".join(sorted(set(ops)))
+            sharpe = entry.get("score", {}).get("sharpe", 0) or 0
+            if fp not in seen or sharpe > seen[fp]:
+                seen[fp] = sharpe
+    return [f"{fp} (best Sharpe={s:.3f})" for fp, s in seen.items()]
+
+
+def build_user_message(history: list[dict], archetype: str | None = None) -> str:
     lines = []
+
+    # ── Archetype directive ───────────────────────────────────────────────────
+    if archetype:
+        lines.append(
+            f"STRATEGY ARCHETYPE FOR THIS ITERATION: {archetype.upper()}\n"
+            f"You MUST propose an expression whose PRIMARY signal belongs to the "
+            f"{archetype} family. Do not default to momentum unless that IS the assigned archetype.\n"
+        )
 
     if not history:
         lines.append("No iterations yet. Propose the first alpha expression.")
         return "\n".join(lines)
+
+    # ── Exclusion list ────────────────────────────────────────────────────────
+    fingerprints = _extract_fingerprints(history)
+    if fingerprints:
+        lines.append(
+            "EXPRESSIONS ALREADY TRIED — DO NOT REPEAT THESE OPERATOR PATTERNS:\n"
+            + "\n".join(f"  • {fp}" for fp in fingerprints)
+            + "\nPropose something STRUCTURALLY DIFFERENT — use different operators, "
+            "different lookback windows, or entirely different signal logic.\n"
+        )
 
     lines.append(f"=== ITERATION HISTORY ({len(history)} attempts) ===")
     for entry in history:
@@ -393,6 +436,8 @@ def run_single_iteration(
     model: str = "claude-sonnet-4-6",
     n_strategies_tested: int = 1,
     system_prompt: str | None = None,
+    archetype: str | None = None,
+    temperature: float = 1.0,
 ) -> dict:
     """Run a single AlphaGPT iteration and return a history entry dict.
 
@@ -457,11 +502,12 @@ def run_single_iteration(
     client = anthropic.Anthropic(api_key=api_key)
 
     # ── Ask the LLM ──────────────────────────────────────────────────────────
-    user_msg = build_user_message(history_snapshot)
+    user_msg = build_user_message(history_snapshot, archetype=archetype)
     try:
         response = client.messages.create(
             model=model,
             max_tokens=1024,
+            temperature=min(temperature, 1.0),  # Anthropic API caps at 1.0
             system=system_prompt if system_prompt is not None else _load_system_prompt(),
             messages=[{"role": "user", "content": user_msg}],
         )

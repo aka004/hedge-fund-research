@@ -70,6 +70,16 @@ logger = logging.getLogger(__name__)
 PARQUET_DIR = STORAGE_PATH / "parquet"
 RESULTS_TSV_PATH = Path(__file__).parent.parent / "data" / "cache" / "results.tsv"
 
+# Strategy archetypes cycled across workers to force expression diversity.
+# Index into list with: WORKER_ARCHETYPES[iteration_index % len(WORKER_ARCHETYPES)]
+WORKER_ARCHETYPES = [
+    "momentum",
+    "mean-reversion",
+    "volatility",
+    "volume-divergence",
+    "value",
+]
+
 
 # ── Batch analysis (pure Python, no LLM) ─────────────────────────────────────
 
@@ -433,13 +443,16 @@ DIVERSITY_HINTS = {
 # ── Human interaction ─────────────────────────────────────────────────────────
 
 
-def ask_approval(proposal: dict) -> bool:
+def ask_approval(proposal: dict, auto_approve: bool = False) -> bool:
     """Ask the user to approve a strategy shift."""
     print(f"\n{'='*60}")
     print(f"STRATEGY SHIFT PROPOSED: {proposal['type']}")
     print(f"{'='*60}")
     print(proposal["description"])
     print()
+    if auto_approve:
+        print("Auto-approving (--auto-approve flag set).")
+        return True
     while True:
         answer = input("Approve this change? [y/n/q(uit)]: ").strip().lower()
         if answer in ("y", "yes"):
@@ -454,7 +467,8 @@ def ask_approval(proposal: dict) -> bool:
 def print_batch_summary(analysis: dict, batch_num: int) -> None:
     """Print a human-readable summary after each batch."""
     print(f"\n{'─'*60}")
-    print(f"BATCH {batch_num} COMPLETE — {analysis['n_iterations']} total iterations")
+    n_iters = analysis.get("n_iterations", 0)
+    print(f"BATCH {batch_num} COMPLETE — {n_iters} total iterations")
     print(f"{'─'*60}")
 
     best = analysis.get("best", {})
@@ -596,6 +610,7 @@ def _run_batch_parallel(
     workers: int,
     worker_timeout: int,
     system_prompt: str | None = None,
+    global_iteration_offset: int = 0,
 ) -> list[dict]:
     """Run a batch of AlphaGPT iterations in parallel using ProcessPoolExecutor.
 
@@ -619,8 +634,14 @@ def _run_batch_parallel(
         tf.close()
         temp_files.append(tf.name)
 
+    # Temperature ladder — more variation across workers encourages diverse proposals.
+    WORKER_TEMPERATURES = [0.3, 0.7, 0.9, 1.1]
+
     worker_args = []
-    for iteration, out_path in zip(batch_iterations, temp_files):
+    for idx, (iteration, out_path) in enumerate(zip(batch_iterations, temp_files)):
+        global_idx = global_iteration_offset + idx
+        archetype = WORKER_ARCHETYPES[global_idx % len(WORKER_ARCHETYPES)]
+        temperature = WORKER_TEMPERATURES[idx % len(WORKER_TEMPERATURES)]
         worker_args.append({
             "iteration": iteration,
             "history_snapshot": history_snapshot,
@@ -636,6 +657,8 @@ def _run_batch_parallel(
             "n_strategies_tested": len(history_snapshot),
             "output_path": out_path,
             "system_prompt": system_prompt,
+            "archetype": archetype,
+            "temperature": temperature,
         })
 
     results: list[dict] = []
@@ -762,19 +785,15 @@ def main() -> None:
                     help="Seconds before killing a worker (default: 300)")
     ap.add_argument("--no-parallel", action="store_true",
                     help="Disable parallelism, run sequentially (original behavior)")
+    ap.add_argument("--auto-approve", action="store_true",
+                    help="Auto-approve all meta-agent strategy shift proposals without prompting")
     args = ap.parse_args()
 
     # ── Universe ──────────────────────────────────────────────────────────
-    if args.universe == "all":
+    if args.universe == "all" or args.universe is None:
         universe = get_all_symbols()
     elif args.universe:
         universe = [t.strip() for t in Path(args.universe).read_text().splitlines() if t.strip()]
-    else:
-        universe = [
-            "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
-            "JPM", "GS", "BAC", "JNJ", "UNH", "PFE",
-            "XOM", "CVX", "COP", "NEE", "DUK", "SPY", "QQQ",
-        ]
 
     config = {
         "universe_size": len(universe),
@@ -822,16 +841,19 @@ def main() -> None:
 
     # ── Batch loop ────────────────────────────────────────────────────────
     total_spent = len(load_history())
+    # global_iterations counts all iterations ever run, never resets on history_clear.
+    # This ensures the budget is a hard cap regardless of how many times history is cleared.
+    global_iterations = 0
     batch_num = 0
 
-    while total_spent < args.budget:
+    while global_iterations < args.budget:
         batch_num += 1
-        remaining = args.budget - total_spent
+        remaining = args.budget - global_iterations
         this_batch = min(args.batch_size, remaining)
 
         print(f"\n{'='*60}")
         print(f"BATCH {batch_num}: Running {this_batch} iterations "
-              f"({total_spent}/{args.budget} spent)")
+              f"({global_iterations}/{args.budget} global | {total_spent} in current history)")
         print(f"Universe: {len(available)} symbols | Model: {config['model']}")
         print(f"{'='*60}\n")
 
@@ -886,6 +908,7 @@ def main() -> None:
                 workers=args.workers,
                 worker_timeout=args.worker_timeout,
                 system_prompt=agpt._load_system_prompt(),
+                global_iteration_offset=global_iterations,
             )
 
             # Main process owns the history file — workers never write to it
@@ -923,6 +946,7 @@ def main() -> None:
                     break
 
         total_spent = len(load_history())
+        global_iterations += this_batch
 
         # --- Post-shift keep/revert check (runs on batch after a shift was applied) ---
         pending = config.pop("_pending_revert_check", None)
@@ -980,8 +1004,8 @@ def main() -> None:
             print(f"ALPHA FOUND after {total_spent} iterations!")
             print(f"PSR={winner.psr:.3f}  Sharpe={winner.sharpe:.3f}  "
                   f"CAGR={winner.cagr:.1f}%")
+            print(f"Continuing to exhaust full budget ({total_spent}/{args.budget})...")
             print(f"{'='*60}")
-            return
 
         # ── Analyze batch results ─────────────────────────────────────────
         history = load_history()
@@ -991,7 +1015,7 @@ def main() -> None:
         # ── Check for strategy shift ──────────────────────────────────────
         proposal = propose_strategy_shift(analysis, config)
         if proposal:
-            approved = ask_approval(proposal)
+            approved = ask_approval(proposal, auto_approve=args.auto_approve)
             if approved:
                 changes = proposal.get("config_changes", {})
                 logger.info(f"Applying: {changes}")
@@ -1052,7 +1076,7 @@ def main() -> None:
     history = load_history()
     analysis = analyze_batch(history)
     print(f"\n{'='*60}")
-    print(f"BUDGET EXHAUSTED ({args.budget} iterations)")
+    print(f"BUDGET EXHAUSTED ({global_iterations} global iterations, budget={args.budget})")
     print(f"{'='*60}")
     print_batch_summary(analysis, "FINAL")
 
