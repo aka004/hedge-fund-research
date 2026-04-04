@@ -203,6 +203,8 @@ IMPORTANT: Abandon momentum+value combinations entirely. Pivot to mean-reversion
 IMPORTANT: Abandon additive momentum+value combinations. Instead, focus on mean-reversion signals using ts_zscore to identify short-term overextension: e.g., cs_rank(-ts_zscore(close, 5)) combined with cs_rank(ts_zscore(volume, 20) - ts_zscore(volume, 5)) to capture volume-confirmed reversals. Use short lookback windows (5-21 days) and avoid ts_decay which appears in every recent failing expression.
 
 IMPORTANT: Abandon momentum-price combinations entirely. Focus on mean-reversion signals using ts_zscore of returns over short windows (5-10 days) combined with liquidity/volume confirmation: e.g., cs_rank(-ts_zscore(close, 10)) * cs_rank(ts_zscore(volume, 5)). Use short holding periods implied by 5-day windows to reduce stop-loss exposure. Try: cs_rank(-ts_zscore(ts_returns(close, 5), 20)) + cs_rank(ts_zscore(volume, 10) - ts_zscore(volume, 63)) as a short-term reversal with volume surge filter.
+
+IMPORTANT: Pivot to mean-reversion: use ts_zscore(close, 20) - ts_zscore(close, 5) to capture short-term overextension relative to medium-term trend, combined with cs_rank(ts_zscore(volume, 10)) to filter for unusual volume confirmation. Avoid momentum-following operators; instead fade short-term extremes with expressions like -cs_rank(ts_zscore(returns, 5)) + cs_rank(ts_zscore(earnings_yield, 63)) to exploit reversion to fundamental value.
 """).strip()
 # === META-AGENT EDITABLE BLOCK END ===
 
