@@ -90,10 +90,13 @@ def load_macro_dataframes(
 
 
 def load_price_dataframes(
-    symbols: list[str], price_col: str = "adj_close"
+    symbols: list[str],
+    price_col: str = "adj_close",
+    prices_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load parquet files into wide close_prices and open_prices DataFrames."""
-    prices_dir = PARQUET_DIR / "prices"
+    if prices_dir is None:
+        prices_dir = PARQUET_DIR / "prices"
     close_frames = {}
     open_frames = {}
 
@@ -130,7 +133,10 @@ def load_price_dataframes(
     return close_prices, open_prices
 
 
-def load_ohlcv_dataframes(symbols: list[str]) -> dict[str, pd.DataFrame]:
+def load_ohlcv_dataframes(
+    symbols: list[str],
+    prices_dir: Path | None = None,
+) -> dict[str, pd.DataFrame]:
     """Load full OHLCV into a dict of wide DataFrames.
 
     Returns:
@@ -139,7 +145,8 @@ def load_ohlcv_dataframes(symbols: list[str]) -> dict[str, pd.DataFrame]:
         Each DataFrame has shape (n_trading_days, n_symbols).
         Uses adj_close for the "close" key.
     """
-    prices_dir = PARQUET_DIR / "prices"
+    if prices_dir is None:
+        prices_dir = PARQUET_DIR / "prices"
     frames: dict[str, dict[str, pd.Series]] = {
         col: {} for col in ("open", "high", "low", "close", "volume")
     }

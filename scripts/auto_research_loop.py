@@ -791,11 +791,23 @@ def main() -> None:
                     help="Auto-approve all meta-agent strategy shift proposals without prompting")
     ap.add_argument("--regime-filter", default=None, choices=["vix"],
                     help="Hard entry gate: 'vix' blocks entries when VIX >= 28 (default: off)")
+    ap.add_argument(
+        "--universe-name", default="sp500",
+        choices=["sp500", "russell2000_tech"],
+        help="Named universe for history isolation, benchmarks, and price paths (default: sp500)"
+    )
     args = ap.parse_args()
 
-    # ── Universe ──────────────────────────────────────────────────────────
+    # ── Universe config ───────────────────────────────────────────────────
+    from scripts.universe import get_universe_config
+    universe_cfg = get_universe_config(args.universe_name)
+
+    # Override HISTORY_PATH in alpha_gpt for this run
+    agpt.HISTORY_PATH = universe_cfg.history_path
+
+    # ── Universe symbols ──────────────────────────────────────────────────
     if args.universe == "all" or args.universe is None:
-        universe = get_all_symbols()
+        universe = sorted([p.stem for p in universe_cfg.prices_dir.glob("*.parquet")])
     elif args.universe:
         universe = [t.strip() for t in Path(args.universe).read_text().splitlines() if t.strip()]
 
@@ -814,8 +826,8 @@ def main() -> None:
     parquet_storage = ParquetStorage(PARQUET_DIR)
 
     def load_all_data(syms):
-        close_prices, open_prices = load_price_dataframes(syms)
-        ohlcv = load_ohlcv_dataframes(syms)
+        close_prices, open_prices = load_price_dataframes(syms, prices_dir=universe_cfg.prices_dir)
+        ohlcv = load_ohlcv_dataframes(syms, prices_dir=universe_cfg.prices_dir)
         available = [s for s in syms if s in close_prices.columns]
         macro_prices, sentiment_prices = load_macro_dataframes(
             date.fromisoformat(args.start), date.fromisoformat(args.end)
@@ -840,8 +852,8 @@ def main() -> None:
             sys.exit(1)
 
     # ── Clear history if requested ────────────────────────────────────────
-    if args.no_resume and HISTORY_PATH.exists():
-        HISTORY_PATH.unlink()
+    if args.no_resume and universe_cfg.history_path.exists():
+        universe_cfg.history_path.unlink()
 
     # ── Batch loop ────────────────────────────────────────────────────────
     total_spent = len(load_history())
@@ -1048,7 +1060,7 @@ def main() -> None:
                 _shift_rationale = proposal.get("meta_rationale", proposal.get("description", ""))
 
                 if changes.get("universe") == "all":
-                    universe = get_all_symbols()
+                    universe = sorted([p.stem for p in universe_cfg.prices_dir.glob("*.parquet")])
                     logger.info(f"Expanding universe to {len(universe)} symbols...")
                     close_prices, open_prices, ohlcv, macro_prices, sentiment_prices, available = \
                         load_all_data(universe)
@@ -1113,7 +1125,7 @@ def main() -> None:
         print("  2. Longer backtest period")
         print("  3. More granular data (intraday if available)")
 
-    print(f"\nFull history: {HISTORY_PATH}")
+    print(f"\nFull history: {universe_cfg.history_path}")
 
 
 if __name__ == "__main__":
