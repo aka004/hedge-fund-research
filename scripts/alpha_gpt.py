@@ -303,16 +303,20 @@ def validate_winner_cpcv(
 # ── Build user message ────────────────────────────────────────────────────────
 
 
-def _extract_fingerprints(history: list[dict]) -> list[str]:
+def _extract_fingerprints(history: list[dict], universe_name: str = "sp500") -> list[str]:
     """Extract operator fingerprints from recent history for the exclusion list.
 
     A fingerprint is the set of top-level operator calls in an expression,
     e.g. "cs_rank(ts_returns(...))" → "cs_rank+ts_returns".
     Returns deduplicated fingerprints with their best Sharpe for context.
+    Only considers entries from the same universe to avoid cross-universe exclusions.
     """
     import re
     seen: dict[str, float] = {}  # fingerprint → best sharpe
     for entry in history[-20:]:
+        # Only consider entries from the same universe
+        if entry.get("universe", "sp500") != universe_name:
+            continue
         expr = entry.get("spec", {}).get("expression", "")
         if not expr:
             continue
@@ -326,7 +330,25 @@ def _extract_fingerprints(history: list[dict]) -> list[str]:
     return [f"{fp} (best Sharpe={s:.3f})" for fp, s in seen.items()]
 
 
-def build_user_message(history: list[dict], archetype: str | None = None) -> str:
+def _build_error_entry_for_test(
+    iteration: int,
+    diag: str,
+    spec: dict,
+    universe_name: str = "sp500",
+) -> dict:
+    """For unit tests only — builds a minimal entry dict with universe tag."""
+    return {
+        "iteration": iteration,
+        "universe": universe_name,
+        "spec": spec,
+        "score": {},
+        "diagnosis": diag,
+        "timestamp": "",
+        "trace": {},
+    }
+
+
+def build_user_message(history: list[dict], archetype: str | None = None, universe_name: str = "sp500") -> str:
     lines = []
 
     # ── Archetype directive ───────────────────────────────────────────────────
@@ -342,7 +364,7 @@ def build_user_message(history: list[dict], archetype: str | None = None) -> str
         return "\n".join(lines)
 
     # ── Exclusion list ────────────────────────────────────────────────────────
-    fingerprints = _extract_fingerprints(history)
+    fingerprints = _extract_fingerprints(history, universe_name=universe_name)
     if fingerprints:
         lines.append(
             "EXPRESSIONS ALREADY TRIED — DO NOT REPEAT THESE OPERATOR PATTERNS:\n"
@@ -467,6 +489,7 @@ def run_single_iteration(
     archetype: str | None = None,
     temperature: float = 1.0,
     regime_filter: str | None = None,
+    universe_name: str = "sp500",
 ) -> dict:
     """Run a single AlphaGPT iteration and return a history entry dict.
 
@@ -508,6 +531,7 @@ def run_single_iteration(
     def _error_entry(diag, *, spec=None, raw=None, parse_err=None, bt_err=None):
         return {
             "iteration": iteration,
+            "universe": universe_name,
             "spec": spec if spec is not None else {},
             "score": {},
             "diagnosis": diag,
@@ -531,7 +555,7 @@ def run_single_iteration(
     client = anthropic.Anthropic(api_key=api_key)
 
     # ── Ask the LLM ──────────────────────────────────────────────────────────
-    user_msg = build_user_message(history_snapshot, archetype=archetype)
+    user_msg = build_user_message(history_snapshot, archetype=archetype, universe_name=universe_name)
     try:
         response = client.messages.create(
             model=model,
@@ -609,6 +633,7 @@ def run_single_iteration(
     _engine_trace = (score.trace or {}) if score is not None else {}
     entry = {
         "iteration": iteration,
+        "universe": universe_name,
         "spec": spec,
         "score": {
             "sharpe": score.sharpe, "cagr": score.cagr,

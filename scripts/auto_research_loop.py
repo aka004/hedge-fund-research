@@ -612,6 +612,7 @@ def _run_batch_parallel(
     system_prompt: str | None = None,
     global_iteration_offset: int = 0,
     regime_filter: str | None = None,
+    universe_name: str = "sp500",
 ) -> list[dict]:
     """Run a batch of AlphaGPT iterations in parallel using ProcessPoolExecutor.
 
@@ -655,12 +656,16 @@ def _run_batch_parallel(
             "start": start,
             "end": end,
             "model": model,
-            "n_strategies_tested": len(history_snapshot),
+            "n_strategies_tested": sum(
+                1 for e in history_snapshot
+                if e.get("universe", "sp500") == universe_name
+            ),
             "output_path": out_path,
             "system_prompt": system_prompt,
             "archetype": archetype,
             "temperature": temperature,
             "regime_filter": regime_filter,
+            "universe_name": universe_name,
         })
 
     results: list[dict] = []
@@ -926,6 +931,7 @@ def main() -> None:
                 system_prompt=agpt._load_system_prompt(),
                 global_iteration_offset=global_iterations,
                 regime_filter=args.regime_filter,
+                universe_name=args.universe_name,
             )
 
             # Main process owns the history file — workers never write to it
