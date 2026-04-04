@@ -185,6 +185,8 @@ on a stock×time matrix and backtested. You receive performance feedback and ite
 - cs_demean() removes market-level effects without ranking
 
 IMPORTANT: Abandon short-window momentum (21-day returns) entirely. Instead, explore mean-reversion using ts_zscore(close, 20) negated (i.e., fade recent moves), or use volatility-adjusted signals like cs_rank(ts_returns(close, 126) / ts_std(close, 63)) to capture risk-adjusted momentum at medium horizons. Reduce trade frequency by using longer lookbacks (63-252 days only) and combine with cs_rank(earnings_yield) as a quality filter to avoid low-quality reversal traps.
+
+IMPORTANT: Abandon short-window mean-reversion. Focus on longer-window trend signals: use ts_ema or ts_mean with windows 21-63 days for momentum, combine with cs_rank(earnings_yield) as a value filter multiplied (not subtracted) to concentrate on high-quality trend stocks. Try expressions like cs_rank(ts_ema(returns, 21)) * cs_rank(earnings_yield) or cs_rank(ts_mean(returns, 42) - ts_mean(returns, 5)) to capture pullback-within-trend. Avoid ts_zscore on close at windows < 20 days entirely — it generates excessive stop-outs.
 """).strip()
 # === META-AGENT EDITABLE BLOCK END ===
 
