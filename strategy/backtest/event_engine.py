@@ -133,9 +133,12 @@ class EventDrivenEngine:
             sent_norm = self._normalize_index(sentiment_prices)
             vix_col = "^VIX" if "^VIX" in sent_norm.columns else None
             if vix_col:
-                _vix_series = sent_norm[vix_col].dropna()
+                # Shift VIX by 1 day to avoid look-ahead bias: VIX closes after market,
+                # so today's entry gate must use yesterday's VIX reading.
+                _vix_series = sent_norm[vix_col].shift(1).dropna()
                 logger.info(
-                    f"VIX hard entry gate active: {len(_vix_series)} VIX observations loaded"
+                    f"VIX hard entry gate active: {len(_vix_series)} VIX observations loaded "
+                    f"(lagged 1 day — no look-ahead bias)"
                 )
             else:
                 logger.warning(
