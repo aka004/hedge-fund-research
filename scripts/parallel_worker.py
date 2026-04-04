@@ -125,6 +125,7 @@ def worker_fn(args: dict) -> None:
             temperature=args.get("temperature", 1.0),
             regime_filter=args.get("regime_filter"),
             universe_name=args.get("universe_name", "sp500"),
+            benchmark_symbol=args.get("benchmark_symbol", "SPY"),
         )
     except Exception as exc:
         import traceback

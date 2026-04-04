@@ -271,6 +271,7 @@ def run_config(
     combiner=None,  # optional SignalCombiner override (used by AlphaGPT)
     n_strategies_tested: int = 1,  # cumulative count for DSR correction
     regime_filter: str | None = None,  # "vix" = hard VIX < 18 entry gate; None = off
+    benchmark_symbol: str = "SPY",
 ) -> RunScore:
     config_id = params["label"]
     logger.info(f"  Running: {config_id}")
@@ -307,6 +308,7 @@ def run_config(
         use_regime_multiplier=params["use_regime"],
         use_meta_labeling=params["use_meta"],
         regime_filter=regime_filter,
+        benchmark_symbol=benchmark_symbol,
     )
 
     # Use provided combiner (AlphaGPT) or default momentum-only combiner
