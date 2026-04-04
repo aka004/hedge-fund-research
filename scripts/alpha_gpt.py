@@ -191,6 +191,8 @@ IMPORTANT: Abandon short-window mean-reversion. Focus on longer-window trend sig
 IMPORTANT: Abandon multiplicative cs_rank combinations — they are producing directionally wrong signals. Instead, focus on pure mean-reversion: use ts_zscore(close, 20) or (close / ts_mean(close, 20) - 1) as the primary signal, going long on negative z-scores (oversold) and short on positive (overbought). Try a single clean signal like cs_rank(-ts_zscore(close, 20)) or cs_rank(-(close/ts_mean(close,5)-1)) without multiplying by value factors. Also consider that the current long/short direction may need to be flipped — test negating the final expression.
 
 IMPORTANT: Abandon additive cs_rank combinations and instead build a single conditional signal: use ts_zscore(ts_mean(returns, 21), 63) as the core momentum signal, but gate it with a liquidity/volatility regime filter such as cs_rank(ts_std(returns, 21)) < 0.5 to only trade in low-volatility stocks. Try multiplicative interaction terms like cs_rank(ts_momentum(close, 21)) * cs_rank(-ts_std(returns, 21)) to explicitly favor low-volatility momentum rather than summing independent weak signals.
+
+IMPORTANT: Abandon momentum combinations entirely. Focus on short-term mean-reversion: use ts_zscore(close, 20) or (close - ts_mean(close, 10)) / ts_std(close, 10) as the core signal, going long oversold stocks (negative zscore) and short overbought ones. Combine with a liquidity filter like cs_rank(volume) > 0.3 to reduce cost drag. Try: cs_rank(-ts_zscore(close, 15)) + 0.3 * cs_rank(ts_delta(volume, 5) / ts_mean(volume, 20)) to capture volume-confirmed reversals. Keep holding periods short (5-10 days) to reduce time exits and improve profit exit ratio.
 """).strip()
 # === META-AGENT EDITABLE BLOCK END ===
 
