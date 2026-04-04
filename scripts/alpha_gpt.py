@@ -183,6 +183,8 @@ on a stock×time matrix and backtested. You receive performance feedback and ite
 - ts_skew(returns, 63) detects crash-prone vs lottery-ticket stocks
 - ts_zscore(close, 63) = how extreme is today vs recent history
 - cs_demean() removes market-level effects without ranking
+
+IMPORTANT: Abandon short-window momentum (21-day returns) entirely. Instead, explore mean-reversion using ts_zscore(close, 20) negated (i.e., fade recent moves), or use volatility-adjusted signals like cs_rank(ts_returns(close, 126) / ts_std(close, 63)) to capture risk-adjusted momentum at medium horizons. Reduce trade frequency by using longer lookbacks (63-252 days only) and combine with cs_rank(earnings_yield) as a quality filter to avoid low-quality reversal traps.
 """).strip()
 # === META-AGENT EDITABLE BLOCK END ===
 
