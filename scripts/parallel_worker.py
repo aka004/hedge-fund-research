@@ -6,7 +6,9 @@ by ProcessPoolExecutor with spawn context.
 
 import json
 import logging
+import random
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -90,6 +92,11 @@ def worker_fn(args: dict) -> None:
     )
 
     _set_resource_limits(memory_gb=2)
+
+    # Stagger startup to avoid parquet read race conditions when multiple
+    # workers spawn simultaneously and all try to read the same files at once.
+    jitter = random.uniform(0.0, 1.0)
+    time.sleep(jitter)
 
     iteration = args["iteration"]
     output_path = args["output_path"]

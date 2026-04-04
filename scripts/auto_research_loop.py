@@ -765,16 +765,10 @@ def main() -> None:
     args = ap.parse_args()
 
     # ── Universe ──────────────────────────────────────────────────────────
-    if args.universe == "all":
+    if args.universe == "all" or args.universe is None:
         universe = get_all_symbols()
     elif args.universe:
         universe = [t.strip() for t in Path(args.universe).read_text().splitlines() if t.strip()]
-    else:
-        universe = [
-            "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
-            "JPM", "GS", "BAC", "JNJ", "UNH", "PFE",
-            "XOM", "CVX", "COP", "NEE", "DUK", "SPY", "QQQ",
-        ]
 
     config = {
         "universe_size": len(universe),
@@ -980,8 +974,8 @@ def main() -> None:
             print(f"ALPHA FOUND after {total_spent} iterations!")
             print(f"PSR={winner.psr:.3f}  Sharpe={winner.sharpe:.3f}  "
                   f"CAGR={winner.cagr:.1f}%")
+            print(f"Continuing to exhaust full budget ({total_spent}/{args.budget})...")
             print(f"{'='*60}")
-            return
 
         # ── Analyze batch results ─────────────────────────────────────────
         history = load_history()
