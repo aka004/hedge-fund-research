@@ -100,6 +100,9 @@ def worker_fn(args: dict) -> None:
 
     iteration = args["iteration"]
     output_path = args["output_path"]
+    archetype = args.get("archetype")
+    temperature = args.get("temperature", 1.0)
+    logger.info(f"Worker {iteration} | archetype={archetype} | temperature={temperature:.1f}")
 
     try:
         from scripts.alpha_gpt import run_single_iteration
@@ -118,6 +121,8 @@ def worker_fn(args: dict) -> None:
             model=args["model"],
             n_strategies_tested=args["n_strategies_tested"],
             system_prompt=args.get("system_prompt"),
+            archetype=args.get("archetype"),
+            temperature=args.get("temperature", 1.0),
         )
     except Exception as exc:
         import traceback

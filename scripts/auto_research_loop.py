@@ -70,6 +70,16 @@ logger = logging.getLogger(__name__)
 PARQUET_DIR = STORAGE_PATH / "parquet"
 RESULTS_TSV_PATH = Path(__file__).parent.parent / "data" / "cache" / "results.tsv"
 
+# Strategy archetypes cycled across workers to force expression diversity.
+# Index into list with: WORKER_ARCHETYPES[iteration_index % len(WORKER_ARCHETYPES)]
+WORKER_ARCHETYPES = [
+    "momentum",
+    "mean-reversion",
+    "volatility",
+    "volume-divergence",
+    "value",
+]
+
 
 # ── Batch analysis (pure Python, no LLM) ─────────────────────────────────────
 
@@ -600,6 +610,7 @@ def _run_batch_parallel(
     workers: int,
     worker_timeout: int,
     system_prompt: str | None = None,
+    global_iteration_offset: int = 0,
 ) -> list[dict]:
     """Run a batch of AlphaGPT iterations in parallel using ProcessPoolExecutor.
 
@@ -623,8 +634,14 @@ def _run_batch_parallel(
         tf.close()
         temp_files.append(tf.name)
 
+    # Temperature ladder — more variation across workers encourages diverse proposals.
+    WORKER_TEMPERATURES = [0.3, 0.7, 0.9, 1.1]
+
     worker_args = []
-    for iteration, out_path in zip(batch_iterations, temp_files):
+    for idx, (iteration, out_path) in enumerate(zip(batch_iterations, temp_files)):
+        global_idx = global_iteration_offset + idx
+        archetype = WORKER_ARCHETYPES[global_idx % len(WORKER_ARCHETYPES)]
+        temperature = WORKER_TEMPERATURES[idx % len(WORKER_TEMPERATURES)]
         worker_args.append({
             "iteration": iteration,
             "history_snapshot": history_snapshot,
@@ -640,6 +657,8 @@ def _run_batch_parallel(
             "n_strategies_tested": len(history_snapshot),
             "output_path": out_path,
             "system_prompt": system_prompt,
+            "archetype": archetype,
+            "temperature": temperature,
         })
 
     results: list[dict] = []
@@ -889,6 +908,7 @@ def main() -> None:
                 workers=args.workers,
                 worker_timeout=args.worker_timeout,
                 system_prompt=agpt._load_system_prompt(),
+                global_iteration_offset=global_iterations,
             )
 
             # Main process owns the history file — workers never write to it
