@@ -35,7 +35,7 @@ class EventEngineConfig:
     use_regime_multiplier: bool = True  # enable 3-layer regime multiplier
     use_meta_labeling: bool = True  # enable rolling meta-label sizing
     # Hard entry filter based on a regime detector.
-    # "vix"  — skip all new entries on days where VIX >= 18 (sideways/bear block).
+    # "vix"  — skip all new entries on days where VIX >= 28 (sideways/bear block).
     # None   — no filter applied (default, fully backward-compatible).
     regime_filter: str | None = None
 
@@ -313,7 +313,7 @@ class EventDrivenEngine:
             logger.info(
                 f"VIX gate summary: {_vix_rebalances_allowed}/{total_reb} rebalance days allowed "
                 f"({_vix_rebalances_allowed/total_reb*100:.0f}%), "
-                f"{_vix_rebalances_skipped} skipped (VIX >= 18)"
+                f"{_vix_rebalances_skipped} skipped (VIX >= 28)"
             )
 
         return self._build_result(
@@ -377,13 +377,13 @@ class EventDrivenEngine:
                 del positions[symbol]
 
         # --- VIX hard entry gate ---
-        # When regime_filter="vix", block all new entries on days where VIX >= 18.
+        # When regime_filter="vix", block all new entries on days where VIX >= 28.
         # Existing positions are still managed (exits proceed above); only new entries
         # are suppressed. This isolates alpha to low-volatility bull regime days.
         if self.config.regime_filter == "vix" and vix_today is not None:
-            if vix_today >= 18.0:
+            if vix_today >= 28.0:
                 logger.debug(
-                    f"{today}: VIX={vix_today:.1f} >= 18 — entry gate CLOSED, "
+                    f"{today}: VIX={vix_today:.1f} >= 28 — entry gate CLOSED, "
                     f"skipping {len([s for s in signals if s.symbol not in positions])} new entries"
                 )
                 return cash, positions, completed_trades, {
@@ -394,7 +394,7 @@ class EventDrivenEngine:
                     "vix_rebalances_allowed": 0,
                 }
             else:
-                logger.debug(f"{today}: VIX={vix_today:.1f} < 18 — entry gate OPEN")
+                logger.debug(f"{today}: VIX={vix_today:.1f} < 28 — entry gate OPEN")
 
         vix_allowed_stat = 1 if self.config.regime_filter == "vix" and vix_today is not None else 0
 

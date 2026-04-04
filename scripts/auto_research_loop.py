@@ -611,6 +611,7 @@ def _run_batch_parallel(
     worker_timeout: int,
     system_prompt: str | None = None,
     global_iteration_offset: int = 0,
+    regime_filter: str | None = None,
 ) -> list[dict]:
     """Run a batch of AlphaGPT iterations in parallel using ProcessPoolExecutor.
 
@@ -659,6 +660,7 @@ def _run_batch_parallel(
             "system_prompt": system_prompt,
             "archetype": archetype,
             "temperature": temperature,
+            "regime_filter": regime_filter,
         })
 
     results: list[dict] = []
@@ -787,6 +789,8 @@ def main() -> None:
                     help="Disable parallelism, run sequentially (original behavior)")
     ap.add_argument("--auto-approve", action="store_true",
                     help="Auto-approve all meta-agent strategy shift proposals without prompting")
+    ap.add_argument("--regime-filter", default=None, choices=["vix"],
+                    help="Hard entry gate: 'vix' blocks entries when VIX >= 28 (default: off)")
     args = ap.parse_args()
 
     # ── Universe ──────────────────────────────────────────────────────────
@@ -909,6 +913,7 @@ def main() -> None:
                 worker_timeout=args.worker_timeout,
                 system_prompt=agpt._load_system_prompt(),
                 global_iteration_offset=global_iterations,
+                regime_filter=args.regime_filter,
             )
 
             # Main process owns the history file — workers never write to it

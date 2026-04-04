@@ -438,6 +438,7 @@ def run_single_iteration(
     system_prompt: str | None = None,
     archetype: str | None = None,
     temperature: float = 1.0,
+    regime_filter: str | None = None,
 ) -> dict:
     """Run a single AlphaGPT iteration and return a history entry dict.
 
@@ -564,6 +565,7 @@ def run_single_iteration(
         parquet_storage=None,
         combiner=combiner,
         n_strategies_tested=n_strategies_tested,
+        regime_filter=regime_filter,
     )
 
     diag = diagnose(score)

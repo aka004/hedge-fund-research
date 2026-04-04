@@ -123,6 +123,7 @@ def worker_fn(args: dict) -> None:
             system_prompt=args.get("system_prompt"),
             archetype=args.get("archetype"),
             temperature=args.get("temperature", 1.0),
+            regime_filter=args.get("regime_filter"),
         )
     except Exception as exc:
         import traceback
