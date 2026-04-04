@@ -457,7 +457,8 @@ def ask_approval(proposal: dict, auto_approve: bool = False) -> bool:
 def print_batch_summary(analysis: dict, batch_num: int) -> None:
     """Print a human-readable summary after each batch."""
     print(f"\n{'─'*60}")
-    print(f"BATCH {batch_num} COMPLETE — {analysis['n_iterations']} total iterations")
+    n_iters = analysis.get("n_iterations", 0)
+    print(f"BATCH {batch_num} COMPLETE — {n_iters} total iterations")
     print(f"{'─'*60}")
 
     best = analysis.get("best", {})
