@@ -4,6 +4,8 @@
 **Target Completion:** 2026-01-18
 **Status:** COMPLETE
 
+> Re-prioritized 2026-04-16 based on stuck-search diagnosis (stop-loss exits 45–58%, Sharpe negative, operator combos recycling).
+
 ---
 
 ## Setup Phase
@@ -135,6 +137,14 @@ _Log any blockers, decisions, or issues here:_
 
 ---
 
+## Active Priority (2026-04-16)
+
+Diagnosis: LLM expression search is stuck — primary signals firing too often (stop-loss 45–58%, `meta_prob` stuck at 0.5, `cusum_entry_rate=1.0`), validation not rejecting overfit noise across 145+ iterations.
+
+1. **AFML Stage 9 — Meta-labeling & feature importance.** Direct fix for false-entry domination; plumbing exists (`meta_prob=0.5`) but the secondary classifier isn't trained/tuned. Biggest expected reduction in stop-loss rate.
+2. **AFML Stage 6 — CPCV + Sequential Bootstrap.** Produces a *distribution* of Sharpes across the iteration space rather than a single Purged-K-Fold number; catches overfitting that current CV misses.
+3. **B6 — `expected_max_sharpe()` usage for multiple testing correction.** One-function fix that makes PSR honest when testing many strategies. Complements Stage 9 (fewer false entries) and Stage 6 (honest distribution).
+
 ---
 
 ## Code Quality & Bug Fixes
@@ -144,11 +154,11 @@ _Log any blockers, decisions, or issues here:_
 
 | # | Task | Status | Priority |
 |---|------|--------|----------|
-| B1 | Fix PSR benchmark formula (remove /sqrt(annualization)) | [ ] | High |
+| B1 | Fix PSR benchmark formula (remove /sqrt(annualization)) | [x] | High — done in b781988 (2026-03-28) |
 | B2 | Add bi-directional purging to cross-validation | [ ] | High |
 | B3 | Add Walk-Forward Efficiency (WFE) metric | [ ] | High |
 | B4 | Add Marcenko-Pastur covariance denoising | [ ] | Medium |
-| B5 | Run backtests to generate actual metrics | [ ] | High |
+| B5 | Run backtests to generate actual metrics | [x] | High — running continuously via auto_research_loop |
 | B6 | Add expected_max_sharpe() for multiple testing correction | [ ] | Medium |
 | B7 | Add EWMA volatility estimation | [ ] | Low |
 
@@ -264,15 +274,19 @@ Reference: https://x.com/FinanceLancelot/status/2015484376360829184
 
 ---
 
-## Phase 3: Multi-Agent Research Execution
+## Deferred (different architecture — Phase-3 multi-agent orchestrator, not current EOD loop)
+
+The sections below describe a separate research-agent orchestration system (Phase 3 Multi-Agent + its Quant Department integration). They do not share code with the current EOD backtest pipeline and are parked here until that architecture is active.
+
+### Phase 3: Multi-Agent Research Execution
 
 **Added:** 2026-01-26
 **Source:** 09-EXECUTION-GUIDE.md (hedge-fund-simulation)
-**Status:** PLANNED (for later implementation)
+**Status:** DEFERRED
 
 This is a full multi-agent research orchestration system with 3 execution methods.
 
-### Execution Methods
+#### Execution Methods
 
 | Method | Description | Complexity |
 |--------|-------------|------------|
@@ -280,7 +294,7 @@ This is a full multi-agent research orchestration system with 3 execution method
 | Python Orchestration | Script coordinates agents | Medium |
 | Full Automation | Scheduled research with feedback loop | High |
 
-### Components to Build
+#### Components to Build
 
 | # | Component | Status | Priority |
 |---|-----------|--------|----------|
@@ -292,7 +306,7 @@ This is a full multi-agent research orchestration system with 3 execution method
 | E6 | improvement_dashboard.py | [ ] | Low |
 | E7 | cron_research.py scheduler | [ ] | Low |
 
-### Database Schema Extensions
+#### Database Schema Extensions
 
 ```sql
 -- New tables needed
@@ -308,14 +322,14 @@ CREATE TABLE improvement_backlog (
 );
 ```
 
-### Key Features
+#### Key Features
 
 - **Database-first approach**: Check local data before external sources
 - **Continuous improvement loop**: Each session identifies data gaps
 - **Efficiency tracking**: Database hit rate, workaround time metrics
 - **Quality gates**: Coverage, E[TR], Skew, Margin of Safety, Quality Score
 
-### Directory Structure (Target)
+#### Directory Structure (Target)
 
 ```
 research_system/
@@ -337,21 +351,19 @@ research_system/
 └── feedback/
 ```
 
-### Reference
+#### Reference
 
 Full guide: `hedge-fund-simulation/09-EXECUTION-GUIDE.md`
 
 ---
 
----
+### Quant Department Integration (2026-01-27)
 
-## Quant Department Integration (2026-01-27)
-
-### Priority: HIGH
+#### Priority: HIGH
 
 The orchestrator currently uses **arbitrary values** that should be derived from quantitative methods.
 
-### TODO Items
+#### TODO Items
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
@@ -362,7 +374,7 @@ The orchestrator currently uses **arbitrary values** that should be derived from
 | Q5 | Add options-implied probability estimation | [ ] | Use options chain for market expectations |
 | Q6 | Implement bootstrap confidence intervals | [ ] | For DCF and valuation ranges |
 
-### Arbitrary Values Identified (Audit Results)
+#### Arbitrary Values Identified (Audit Results)
 
 **In orchestrator.py / agent prompts:**
 
@@ -377,7 +389,7 @@ The orchestrator currently uses **arbitrary values** that should be derived from
 | Equity risk premium | 02-QUANT-AGENT | 5.5% | Damodaran or implied ERP |
 | Recovery time estimates | 03-RISK-AGENT | Arbitrary | Historical drawdown analysis |
 
-### Quantitative Methods to Implement
+#### Quantitative Methods to Implement
 
 1. **Probability Estimation:**
    - Historical return distribution → percentile mapping
@@ -393,7 +405,7 @@ The orchestrator currently uses **arbitrary values** that should be derived from
    - Fat tails via Student-t or EVT
    - Regime switching for bull/bear
 
-### Reference
+#### Reference
 
 See AFML chapters:
 - Ch 5: Fractionally Differentiated Features
