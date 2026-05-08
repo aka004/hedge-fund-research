@@ -22,7 +22,7 @@ Dispatch ONE subagent: `research-skeleton-gatherer`. Prompt it with the ticker a
 
 After it finishes:
 - Confirm `<WORKING_DIR>/coverage_core.json` exists and parses as valid JSON.
-- Append a line to `run_log.jsonl` with `{agent, started_at, ended_at, exit_status, output_files}`.
+- Append a line to `run_log.jsonl` with `{agent, started_at, ended_at, exit_status, output_files, retry_count}`.
 
 If `coverage_core.json` is missing or invalid, retry the subagent ONCE. If still missing, log the failure, stop here, and tell the user the run failed with a pointer to `run_log.jsonl`.
 
