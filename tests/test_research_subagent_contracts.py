@@ -68,3 +68,30 @@ def test_section_writer_has_required_contract():
     assert "**Inference**" in body
     # Hard grounding rule (numerical claim without cite -> Inference)
     assert "must be tagged" in body.lower() or "must tag" in body.lower()
+
+
+def test_verifier_has_required_contract():
+    body = _read("research-verifier.md")
+    assert "name: research-verifier" in body
+    # Tools — note: NO WebSearch (verifier only re-fetches cited URLs)
+    for tool in ("WebFetch", "Read", "Write"):
+        assert tool in body
+    assert "WebSearch" not in body  # verifier should not search; it re-fetches
+    # Output file
+    assert "verification_report.json" in body
+    # Verdicts
+    for v in (
+        "VERIFIED",
+        "SUPPORTED",
+        "UNSUPPORTED",
+        "MISSING_CITATION",
+        "STALE",
+        "UNVERIFIABLE_NETWORK",
+    ):
+        assert v in body
+    # Hard rule: NO edits to section files
+    assert (
+        "no edit" in body.lower()
+        or "do not edit" in body.lower()
+        or "do not modify" in body.lower()
+    )
