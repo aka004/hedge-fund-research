@@ -44,3 +44,27 @@ def test_skeleton_gatherer_has_required_contract():
     assert "earnings call" in body.lower()
     # Hard rule: no fabrication
     assert "do not invent" in body.lower() or "do not fabricate" in body.lower()
+
+
+def test_section_writer_has_required_contract():
+    body = _read("research-section-writer.md")
+    assert "name: research-section-writer" in body
+    # Tools — writers gain WebSearch for deepening
+    for tool in ("WebSearch", "WebFetch", "Read", "Grep", "Write"):
+        assert tool in body
+    # Two-phase process
+    assert "deepen" in body.lower()
+    # Cluster names
+    for cluster in ("A", "B", "C", "D"):
+        assert cluster in body
+    # Section taxonomy markers
+    for sec in ("§2", "§14", "§20"):
+        assert sec in body
+    # Citation format
+    assert "[src:" in body
+    # Fact/Analysis/Inference labels
+    assert "**Fact**" in body
+    assert "**Analysis**" in body
+    assert "**Inference**" in body
+    # Hard grounding rule (numerical claim without cite -> Inference)
+    assert "must be tagged" in body.lower() or "must tag" in body.lower()
