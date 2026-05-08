@@ -95,3 +95,29 @@ def test_verifier_has_required_contract():
         or "do not edit" in body.lower()
         or "do not modify" in body.lower()
     )
+
+
+def test_synthesizer_has_required_contract():
+    body = _read("research-synthesizer.md")
+    assert "name: research-synthesizer" in body
+    # Tools — Read + Write only, NO web tools
+    assert "WebSearch" not in body
+    assert "WebFetch" not in body
+    for tool in ("Read", "Write"):
+        assert tool in body
+    # Output files
+    assert "memo.md" in body
+    assert "appendix.md" in body
+    # Section ownership: synthesizer authors §1 and §21
+    assert "§1" in body and "§21" in body
+    # Decision rules
+    assert "E[TR]" in body
+    for gate in ("Margin of Safety", "Skew", "Why-now", "Quality"):
+        assert gate.lower() in body.lower()
+    # Refusal pattern
+    assert "cannot be Buy" in body or "cannot be **Buy**" in body
+    # Quality scorecard subscores
+    for s in ("Market", "Moat", "Unit Economics", "Execution", "Financial Quality"):
+        assert s in body
+    # Header format
+    assert "Quality = " in body and "Entry = " in body
