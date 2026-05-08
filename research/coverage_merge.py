@@ -7,6 +7,8 @@ by an LLM agent — dedupe and validator counts must be reproducible.
 
 from __future__ import annotations
 
+from collections import Counter
+from datetime import date, datetime
 from typing import Any
 
 
@@ -41,6 +43,57 @@ def merge_fragments(
     return merged
 
 
-def run_validator(*args: object, **kwargs: object) -> None:
-    """Validate merged coverage rows against quality gates. Implemented in Task 4."""
-    raise NotImplementedError("Implemented in Task 4")
+def _parse_date(s: str) -> date:
+    return datetime.strptime(s, "%Y-%m-%d").date()
+
+
+def _months_between(earlier: date, later: date) -> int:
+    return (later.year - earlier.year) * 12 + (later.month - earlier.month)
+
+
+def run_validator(
+    merged: list[dict[str, Any]],
+    today: date,
+) -> list[dict[str, Any]]:
+    """Run the six coverage-validator rules against the merged set.
+
+    Returns a list of {rule, value, threshold, status} entries.
+    """
+    n = len(merged)
+    results: list[dict[str, Any]] = []
+
+    def add(rule: str, value: Any, threshold: Any, passed: bool) -> None:
+        results.append(
+            {
+                "rule": rule,
+                "value": value,
+                "threshold": threshold,
+                "status": "PASS" if passed else "FAIL",
+            }
+        )
+
+    add("min_60_sources", n, 60, n >= 60)
+
+    hq = sum(1 for r in merged if r.get("source_type") == "hq-media")
+    add("min_10_hq_media", hq, 10, hq >= 10)
+
+    comp = sum(1 for r in merged if r.get("source_type") == "competitor-primary")
+    add("min_5_competitor_primary", comp, 5, comp >= 5)
+
+    acad = sum(1 for r in merged if r.get("source_type") == "academic-expert")
+    add("min_5_academic_expert", acad, 5, acad >= 5)
+
+    recent_count = sum(
+        1 for r in merged if _months_between(_parse_date(r["date"]), today) <= 24
+    )
+    ratio = recent_count / n if n else 0.0
+    add("min_60pct_recent", ratio, 0.6, ratio >= 0.6)
+
+    if n:
+        domain_counts = Counter(r["domain"] for r in merged)
+        max_pct = max(domain_counts.values()) / n
+    else:
+        max_pct = 0.0
+    add("max_10pct_per_domain", max_pct, 0.10, max_pct <= 0.10)
+
+    return results
