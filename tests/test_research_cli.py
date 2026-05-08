@@ -77,3 +77,59 @@ def test_merge_coverage_cli_handles_missing_fragment_files(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     log = json.loads((tmp_path / "coverage_log.json").read_text())
     assert len(log) == 1
+
+
+def test_validate_memo_cli_passes_on_valid_memo(tmp_path: Path):
+    memo = """\
+# X
+
+## Executive Summary
+
+Quality = 70/100 | Entry = Watch
+
+**Fact** Revenue was $1B [src:core:1].
+
+## Coverage Log
+
+(appended)
+"""
+    (tmp_path / "memo.md").write_text(memo)
+    (tmp_path / "coverage_log.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": 1,
+                    "scope": "core",
+                    "title": "10-K",
+                    "link": "https://sec.gov/x",
+                    "date": "2025-01-01",
+                    "source_type": "filing",
+                    "domain": "sec.gov",
+                }
+            ]
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, "scripts/validate_memo.py", str(tmp_path)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_validate_memo_cli_exits_nonzero_on_failure(tmp_path: Path):
+    # Missing gate header should fail
+    memo = "# X\n\n## Executive Summary\n\n(no gate header)\n\n## Coverage Log\n"
+    (tmp_path / "memo.md").write_text(memo)
+    (tmp_path / "coverage_log.json").write_text("[]")
+
+    result = subprocess.run(
+        [sys.executable, "scripts/validate_memo.py", str(tmp_path)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "gate_header_present" in result.stdout + result.stderr
