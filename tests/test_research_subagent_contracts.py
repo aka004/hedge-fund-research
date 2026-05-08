@@ -121,3 +121,40 @@ def test_synthesizer_has_required_contract():
         assert s in body
     # Header format
     assert "Quality = " in body and "Entry = " in body
+
+
+COMMANDS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "commands"
+
+
+def test_research_command_has_required_orchestration_steps():
+    body = (COMMANDS_DIR / "research.md").read_text()
+    # Frontmatter
+    assert body.startswith("---\n")
+    # Argument
+    assert "TICKER" in body or "$ARGUMENTS" in body
+    # Subagent dispatch (all four)
+    for agent in (
+        "research-skeleton-gatherer",
+        "research-section-writer",
+        "research-verifier",
+        "research-synthesizer",
+    ):
+        assert agent in body
+    # Parallelism for writers
+    assert "parallel" in body.lower() or "single message" in body.lower()
+    # Cluster fan-out (all 4 letters present)
+    for cluster in (
+        "cluster_name=A",
+        "cluster_name=B",
+        "cluster_name=C",
+        "cluster_name=D",
+    ):
+        # Allow alternate punctuation
+        letter = cluster.split("=")[1]
+        assert f"={letter}" in body or f'"{letter}"' in body or f"'{letter}'" in body
+    # Merge step via Bash
+    assert "scripts/merge_coverage.py" in body
+    # Validator inspection
+    assert "coverage_validator.json" in body
+    # Working dir convention
+    assert "output/research" in body
