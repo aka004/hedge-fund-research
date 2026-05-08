@@ -55,7 +55,7 @@ Before planning what to build, here's what's already implemented and working:
 |-----------|------|--------|
 | PerformanceMetrics | `analysis/metrics.py` | Working |
 | DashboardBacktestRunner | `backend/app/services/backtest_runner.py` | Working |
-| Multi-agent orchestrator | `agents/orchestrator.py` | Working |
+| Multi-agent orchestrator | `agents/orchestrator.py` | Archived (2026-05-08, see archive/orchestrators/2026-05-08/b-alpha-testing-events/) |
 
 ---
 
