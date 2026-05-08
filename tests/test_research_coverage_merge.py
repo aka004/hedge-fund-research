@@ -57,3 +57,39 @@ def test_merge_orders_core_before_writer_fragments():
     result = merge_fragments(core=core, fragments=fragments)
     assert result[0]["scope"] == "core"
     assert result[1]["scope"] == "A"
+
+
+def test_dedupe_drops_later_scope_duplicate_link():
+    core = [make_row(link="https://sec.gov/10k")]
+    fragments = {"A": [make_row(link="https://sec.gov/10k", title="mirror")]}
+    result = merge_fragments(core=core, fragments=fragments)
+    assert len(result) == 1
+    assert result[0]["scope"] == "core"
+    assert result[0]["dedupe_origin"] == ["A"]
+
+
+def test_dedupe_records_multiple_dropped_scopes():
+    core = [make_row(link="https://sec.gov/10k")]
+    fragments = {
+        "A": [make_row(link="https://sec.gov/10k")],
+        "B": [make_row(link="https://sec.gov/10k")],
+    }
+    result = merge_fragments(core=core, fragments=fragments)
+    assert len(result) == 1
+    assert sorted(result[0]["dedupe_origin"]) == ["A", "B"]
+
+
+def test_dedupe_does_not_drop_distinct_urls():
+    core = [make_row(link="https://sec.gov/10k")]
+    fragments = {"A": [make_row(link="https://sec.gov/10q")]}
+    result = merge_fragments(core=core, fragments=fragments)
+    assert len(result) == 2
+
+
+def test_dedupe_within_same_fragment():
+    fragments = {
+        "A": [make_row(link="https://x.com/p"), make_row(link="https://x.com/p")]
+    }
+    result = merge_fragments(core=[], fragments=fragments)
+    assert len(result) == 1
+    assert result[0]["dedupe_origin"] == ["A"]

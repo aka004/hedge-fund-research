@@ -14,16 +14,30 @@ def merge_fragments(
     core: list[dict[str, Any]],
     fragments: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """Union core + writer fragments, attaching `scope` to each row.
+    """Union core + writer fragments, attach `scope`, dedupe by `link` URL.
 
-    Order: core rows first, then fragments in alphabetical scope order.
+    First-seen wins. The surviving row gains a `dedupe_origin` list naming
+    every later scope whose duplicate row was dropped (preserves audit trail
+    without inflating validator counts).
     """
     merged: list[dict[str, Any]] = []
+    by_link: dict[str, dict[str, Any]] = {}
+
+    def consume(row: dict[str, Any], scope: str) -> None:
+        link = row["link"]
+        existing = by_link.get(link)
+        if existing is not None:
+            existing.setdefault("dedupe_origin", []).append(scope)
+            return
+        new_row = {**row, "scope": scope}
+        by_link[link] = new_row
+        merged.append(new_row)
+
     for row in core:
-        merged.append({**row, "scope": "core"})
+        consume(row, "core")
     for scope in sorted(fragments.keys()):
         for row in fragments[scope]:
-            merged.append({**row, "scope": scope})
+            consume(row, scope)
     return merged
 
 
