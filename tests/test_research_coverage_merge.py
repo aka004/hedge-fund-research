@@ -36,14 +36,16 @@ def make_row(
 
 
 def test_merge_empty_returns_empty():
-    assert merge_fragments(core=[], fragments={}) == []
+    result = merge_fragments(core=[], fragments={})
+    assert result == {"sources": [], "aliases": {}}
 
 
 def test_merge_attaches_scope_to_core_rows():
     core = [make_row(link="https://sec.gov/abc")]
     result = merge_fragments(core=core, fragments={})
-    assert len(result) == 1
-    assert result[0]["scope"] == "core"
+    assert len(result["sources"]) == 1
+    assert result["sources"][0]["scope"] == "core"
+    assert result["aliases"] == {}
 
 
 def test_merge_attaches_scope_to_writer_fragments():
@@ -52,24 +54,25 @@ def test_merge_attaches_scope_to_writer_fragments():
         "B": [make_row(link="https://example.com/b")],
     }
     result = merge_fragments(core=[], fragments=fragments)
-    assert sorted(r["scope"] for r in result) == ["A", "B"]
+    assert sorted(r["scope"] for r in result["sources"]) == ["A", "B"]
+    assert result["aliases"] == {}
 
 
 def test_merge_orders_core_before_writer_fragments():
     core = [make_row(link="https://sec.gov/x")]
     fragments = {"A": [make_row(link="https://example.com/a")]}
     result = merge_fragments(core=core, fragments=fragments)
-    assert result[0]["scope"] == "core"
-    assert result[1]["scope"] == "A"
+    assert result["sources"][0]["scope"] == "core"
+    assert result["sources"][1]["scope"] == "A"
 
 
 def test_dedupe_drops_later_scope_duplicate_link():
-    core = [make_row(link="https://sec.gov/10k")]
-    fragments = {"A": [make_row(link="https://sec.gov/10k", title="mirror")]}
+    core = [make_row(id=7, link="https://sec.gov/10k")]
+    fragments = {"A": [make_row(id=3, link="https://sec.gov/10k", title="mirror")]}
     result = merge_fragments(core=core, fragments=fragments)
-    assert len(result) == 1
-    assert result[0]["scope"] == "core"
-    assert result[0]["dedupe_origin"] == ["A"]
+    assert len(result["sources"]) == 1
+    assert result["sources"][0]["scope"] == "core"
+    assert result["sources"][0]["dedupe_origin"] == ["A"]
 
 
 def test_dedupe_records_multiple_dropped_scopes():
@@ -79,15 +82,15 @@ def test_dedupe_records_multiple_dropped_scopes():
         "B": [make_row(link="https://sec.gov/10k")],
     }
     result = merge_fragments(core=core, fragments=fragments)
-    assert len(result) == 1
-    assert sorted(result[0]["dedupe_origin"]) == ["A", "B"]
+    assert len(result["sources"]) == 1
+    assert sorted(result["sources"][0]["dedupe_origin"]) == ["A", "B"]
 
 
 def test_dedupe_does_not_drop_distinct_urls():
     core = [make_row(link="https://sec.gov/10k")]
     fragments = {"A": [make_row(link="https://sec.gov/10q")]}
     result = merge_fragments(core=core, fragments=fragments)
-    assert len(result) == 2
+    assert len(result["sources"]) == 2
 
 
 def test_dedupe_within_same_fragment():
@@ -95,8 +98,74 @@ def test_dedupe_within_same_fragment():
         "A": [make_row(link="https://x.com/p"), make_row(link="https://x.com/p")]
     }
     result = merge_fragments(core=[], fragments=fragments)
-    assert len(result) == 1
-    assert result[0]["dedupe_origin"] == ["A"]
+    assert len(result["sources"]) == 1
+    assert result["sources"][0]["dedupe_origin"] == ["A"]
+
+
+# ---------- aliases (new) ----------
+
+
+def test_aliases_records_cluster_into_core_collapse():
+    """B:1 collapsed into core:7 (shared URL) → aliases["B:1"] = "core:7"."""
+    core = [make_row(id=7, link="https://sec.gov/10k", title="primary")]
+    fragments = {"B": [make_row(id=1, link="https://sec.gov/10k", title="mirror")]}
+    result = merge_fragments(core=core, fragments=fragments)
+    assert result["aliases"] == {"B:1": "core:7"}
+    # Direct-source rows are unchanged in identity; only `dedupe_origin` added.
+    assert result["sources"][0]["scope"] == "core"
+    assert result["sources"][0]["id"] == 7
+    assert result["sources"][0]["title"] == "primary"
+
+
+def test_aliases_records_cluster_into_earlier_cluster_collapse():
+    """B:4 collapsed into A:14 — alias points across cluster boundary."""
+    fragments = {
+        "A": [make_row(id=14, link="https://example.com/p")],
+        "B": [make_row(id=4, link="https://example.com/p")],
+    }
+    result = merge_fragments(core=[], fragments=fragments)
+    assert result["aliases"] == {"B:4": "A:14"}
+
+
+def test_aliases_records_multiple_collapses():
+    """Independent collapses each get their own alias entry."""
+    core = [
+        make_row(id=7, link="https://sec.gov/10k"),
+        make_row(id=19, link="https://ir.example.com/transcript"),
+    ]
+    fragments = {
+        "B": [
+            make_row(id=1, link="https://sec.gov/10k"),
+            make_row(id=13, link="https://ir.example.com/transcript"),
+        ],
+        "C": [make_row(id=18, link="https://sec.gov/10k")],
+    }
+    result = merge_fragments(core=core, fragments=fragments)
+    assert result["aliases"] == {
+        "B:1": "core:7",
+        "B:13": "core:19",
+        "C:18": "core:7",
+    }
+
+
+def test_aliases_empty_when_no_dedupe():
+    core = [make_row(id=1, link="https://sec.gov/a")]
+    fragments = {"A": [make_row(id=2, link="https://sec.gov/b")]}
+    result = merge_fragments(core=core, fragments=fragments)
+    assert result["aliases"] == {}
+
+
+def test_aliases_does_not_self_alias_within_same_fragment():
+    """Two rows with id=5 in cluster A on same URL — surviving row doesn't
+    self-alias 'A:5' → 'A:5'."""
+    fragments = {
+        "A": [
+            make_row(id=5, link="https://x.com/p"),
+            make_row(id=5, link="https://x.com/p"),
+        ]
+    }
+    result = merge_fragments(core=[], fragments=fragments)
+    assert result["aliases"] == {}
 
 
 # ---------- run_validator ----------

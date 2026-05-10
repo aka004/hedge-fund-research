@@ -29,7 +29,7 @@ def main(working_dir: Path) -> int:
         for cluster in ("A", "B", "C", "D")
     }
     merged = merge_fragments(core=core, fragments=fragments)
-    validator = run_validator(merged, today=date.today())
+    validator = run_validator(merged["sources"], today=date.today())
 
     (working_dir / "coverage_log.json").write_text(json.dumps(merged, indent=2))
     (working_dir / "coverage_validator.json").write_text(

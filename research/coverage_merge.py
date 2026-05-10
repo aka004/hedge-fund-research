@@ -3,6 +3,21 @@
 This module is the orchestrator's deterministic glue between the
 skeleton-gatherer and the per-cluster writers. It must not be done
 by an LLM agent — dedupe and validator counts must be reproducible.
+
+Output schema (coverage_log.json):
+    {
+        "sources": [<row>, ...],   # the deduped rows; each row keeps all
+                                   # its original fields plus `scope` and
+                                   # an optional `dedupe_origin` list.
+        "aliases": {               # ID-mapping for collapsed rows.
+            "<dropped_scope>:<dropped_id>": "<survivor_scope>:<survivor_id>",
+            ...
+        }
+    }
+
+`aliases` lets the memo validator resolve a citation like `[src:B:1]`
+even when row B:1 was deduped into core:7 because they shared a URL.
+The alias map is empty when no dedupe collapses occurred.
 """
 
 from __future__ import annotations
@@ -15,32 +30,45 @@ from typing import Any
 def merge_fragments(
     core: list[dict[str, Any]],
     fragments: dict[str, list[dict[str, Any]]],
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Union core + writer fragments, attach `scope`, dedupe by `link` URL.
 
     First-seen wins. The surviving row gains a `dedupe_origin` list naming
-    every later scope whose duplicate row was dropped (preserves audit trail
-    without inflating validator counts).
+    every later scope whose duplicate row was dropped. Each dropped row's
+    `<scope>:<id>` is recorded in the `aliases` map pointing at the
+    survivor's `<scope>:<id>` — this preserves the citation path for
+    cluster IDs that get collapsed into core (or earlier clusters).
+
+    Returns a dict with two keys:
+        sources: list[dict] — the deduped rows in insertion order
+                              (core first, then clusters A→Z).
+        aliases: dict[str, str] — `<dropped>` → `<survivor>` mapping.
     """
-    merged: list[dict[str, Any]] = []
+    sources: list[dict[str, Any]] = []
     by_link: dict[str, dict[str, Any]] = {}
+    aliases: dict[str, str] = {}
 
     def consume(row: dict[str, Any], scope: str) -> None:
         link = row["link"]
         existing = by_link.get(link)
         if existing is not None:
             existing.setdefault("dedupe_origin", []).append(scope)
+            dropped_key = f"{scope}:{row['id']}"
+            survivor_key = f"{existing['scope']}:{existing['id']}"
+            # Same-scope same-id duplicates would self-alias — skip those.
+            if dropped_key != survivor_key:
+                aliases[dropped_key] = survivor_key
             return
         new_row = {**row, "scope": scope}
         by_link[link] = new_row
-        merged.append(new_row)
+        sources.append(new_row)
 
     for row in core:
         consume(row, "core")
     for scope in sorted(fragments.keys()):
         for row in fragments[scope]:
             consume(row, scope)
-    return merged
+    return {"sources": sources, "aliases": aliases}
 
 
 def _parse_date(s: str) -> date:
@@ -55,7 +83,12 @@ def run_validator(
     merged: list[dict[str, Any]],
     today: date,
 ) -> list[dict[str, Any]]:
-    """Run the six coverage-validator rules against the merged set.
+    """Run the six coverage-validator rules against the merged source list.
+
+    Takes the deduped `sources` list (not the wrapper dict). Aliased IDs
+    are not counted — they were already collapsed into the survivor — so
+    domain concentration and the other counts operate on the unique
+    surviving rows.
 
     Returns a list of {rule, value, threshold, status} entries.
     """

@@ -64,12 +64,31 @@ def _fact_paragraphs_cited(memo: str) -> dict[str, str]:
     )
 
 
-def _citations_resolve(memo: str, coverage: list[dict[str, Any]]) -> dict[str, str]:
-    available = {(row["scope"], int(row["id"])) for row in coverage}
-    referenced = {
+def _citations_resolve(
+    memo: str,
+    sources: list[dict[str, Any]],
+    aliases: dict[str, str],
+) -> dict[str, str]:
+    """Pass when every cited [src:scope:id] resolves to a source row,
+    either directly or via the aliases map (a `<dropped>` → `<survivor>`
+    record from the coverage merge step)."""
+    available = {(row["scope"], int(row["id"])) for row in sources}
+    referenced = [
         (m.group("scope"), int(m.group("id"))) for m in CITATION_RE.finditer(memo)
-    }
-    missing = referenced - available
+    ]
+    missing: set[tuple[str, int]] = set()
+    for scope, ident in referenced:
+        if (scope, ident) in available:
+            continue
+        target = aliases.get(f"{scope}:{ident}")
+        if target is not None:
+            try:
+                t_scope, t_id_str = target.split(":", 1)
+                if (t_scope, int(t_id_str)) in available:
+                    continue
+            except (ValueError, AttributeError):
+                pass
+        missing.add((scope, ident))
     if not missing:
         return _result("citations_resolve", "PASS")
     formatted = ", ".join(f"[src:{s}:{i}]" for s, i in sorted(missing))
@@ -87,13 +106,24 @@ def _coverage_log_appended(memo: str) -> dict[str, str]:
 
 
 def validate_memo(memo_path: Path, coverage_log_path: Path) -> list[dict[str, str]]:
-    """Run all structural checks on the memo. Returns list of results."""
+    """Run all structural checks on the memo. Returns list of results.
+
+    Accepts both coverage_log.json schemas:
+    - new: {"sources": [...], "aliases": {...}}
+    - legacy: [<row>, ...] — treated as sources with empty aliases.
+    """
     memo = memo_path.read_text()
-    coverage = json.loads(coverage_log_path.read_text())
+    raw = json.loads(coverage_log_path.read_text())
+    if isinstance(raw, dict):
+        sources = raw.get("sources", [])
+        aliases = raw.get("aliases", {})
+    else:
+        sources = raw
+        aliases = {}
     return [
         _exec_summary_first(memo),
         _gate_header_present(memo),
         _fact_paragraphs_cited(memo),
-        _citations_resolve(memo, coverage),
+        _citations_resolve(memo, sources, aliases),
         _coverage_log_appended(memo),
     ]
