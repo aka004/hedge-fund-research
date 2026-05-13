@@ -572,15 +572,20 @@ def generate_ai_verdict(indicators_data: dict) -> dict:
         }
 
     balance = indicators_data.get("signal_balance", {})
-    groups = indicators_data.get("groups", {})
+    # `get_all_indicators_data()` emits the groups payload under the
+    # "indicators" key; reading "groups" silently returned {} and the
+    # Claude prompt was being assembled with no indicator context.
+    groups = indicators_data.get("indicators", {})
 
     summary_lines = []
     for gk, gv in groups.items():
         summary_lines.append(f"\n## {gv['label']}")
         for ind in gv["indicators"]:
             if ind.get("available"):
+                # refresh_indicator() writes the formatted value under
+                # the key "display", not "display_value".
                 summary_lines.append(
-                    f"- {ind['name']}: {ind['display_value']} ({ind['signal']})"
+                    f"- {ind['name']}: {ind['display']} ({ind['signal']})"
                 )
 
     prompt = (
