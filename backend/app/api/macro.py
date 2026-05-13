@@ -28,9 +28,9 @@ def get_indicators():
     """Get all macro indicators with current values and signals."""
     try:
         return get_all_indicators_data()  # ensure_tables() called inside
-    except Exception as e:
-        logger.error(f"Failed to fetch macro indicators: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to fetch macro indicators")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/history/{indicator_id}")
@@ -48,9 +48,9 @@ def get_history(
         return data
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to fetch history for {indicator_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to fetch history for %s", indicator_id)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/verdict")
@@ -63,6 +63,6 @@ def get_verdict(refresh: bool = Query(default=False)):
                 return cached
         indicators = get_all_indicators_data()
         return generate_ai_verdict(indicators)
-    except Exception as e:
-        logger.error(f"Failed to generate verdict: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to generate verdict")
+        raise HTTPException(status_code=500, detail="Internal server error")
