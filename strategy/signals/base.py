@@ -44,15 +44,21 @@ class SignalGenerator(ABC):
         """
         pass
 
-    def _rank_signals(self, signals: list[Signal], ascending: bool = False) -> list[Signal]:
-        """Add ranks to signals based on score.
+    def _rank_signals(
+        self, signals: list[Signal], ascending: bool = False
+    ) -> list[Signal]:
+        """Add ranks to signals based on score and return them in rank order.
 
         Args:
             signals: List of signals to rank
             ascending: If True, lower scores get better (lower) ranks
 
         Returns:
-            Signals with ranks added
+            Signals sorted by score (descending by default), each with
+            its ``rank`` attribute set. Callers should treat the input
+            list as consumed and use the returned list as the source of
+            truth — both reflect the same `Signal` objects, but only
+            the return value is in rank order.
         """
         sorted_signals = sorted(
             signals,
@@ -61,4 +67,4 @@ class SignalGenerator(ABC):
         )
         for rank, signal in enumerate(sorted_signals, 1):
             signal.rank = rank
-        return signals
+        return sorted_signals

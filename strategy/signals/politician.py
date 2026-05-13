@@ -99,7 +99,7 @@ class PoliticianSignal(SignalGenerator):
                 score = self._calculate_buy_signal_strength(
                     politician_name, shares, price, transaction_date, as_of_date
                 )
-                
+
                 signals.append(
                     Signal(
                         symbol=symbol,
@@ -120,7 +120,7 @@ class PoliticianSignal(SignalGenerator):
                 score = self._calculate_sell_signal_strength(
                     politician_name, shares, price, transaction_date, as_of_date
                 )
-                
+
                 signals.append(
                     Signal(
                         symbol=symbol,
@@ -136,8 +136,8 @@ class PoliticianSignal(SignalGenerator):
                     )
                 )
 
-        # Rank signals
-        self._rank_signals(signals)
+        # Rank signals — use the return value so the list is in rank order.
+        signals = self._rank_signals(signals)
 
         logger.info(f"Generated {len(signals)} politician signals for {as_of_date}")
 
@@ -208,7 +208,7 @@ class PoliticianSignal(SignalGenerator):
         buy_strength = self._calculate_buy_signal_strength(
             politician_name, shares, price, transaction_date, as_of_date
         )
-        
+
         # Convert to sell signal (negative)
         return -buy_strength
 
