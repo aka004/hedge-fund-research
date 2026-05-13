@@ -7,6 +7,7 @@ train RF meta-label with Purged K-Fold -> apply AFML validation
 generate caveats -> persist to derived tables.
 """
 
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,13 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+# Strict ticker / ISO-date shape checks so that values can be safely bound
+# as SQL parameters. We use parameterised binding too (defence in depth),
+# but reject obviously malformed inputs at the boundary instead of letting
+# DuckDB raise a less-informative error.
+_TICKER_RE = re.compile(r"^[A-Z0-9.\-^=]{1,10}$")
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 from afml import (
     CombPurgedKFold,
@@ -50,18 +58,33 @@ class DashboardBacktestRunner:
     def _fetch_prices(
         self, tickers: list[str], start_date: str, end_date: str
     ) -> pd.DataFrame:
-        """Fetch adj_close prices for universe from DuckDB."""
+        """Fetch adj_close prices for universe from DuckDB.
+
+        Tickers and dates are shape-validated before binding to guard
+        against SQL injection (these values previously interpolated into
+        the query via f-string).
+        """
+        for t in tickers:
+            if not isinstance(t, str) or not _TICKER_RE.fullmatch(t):
+                raise ValueError(f"invalid ticker: {t!r}")
+        if not _ISO_DATE_RE.fullmatch(start_date):
+            raise ValueError(
+                f"invalid start_date (expected YYYY-MM-DD): {start_date!r}"
+            )
+        if not _ISO_DATE_RE.fullmatch(end_date):
+            raise ValueError(f"invalid end_date (expected YYYY-MM-DD): {end_date!r}")
+
+        ticker_placeholders = ", ".join(["?"] * len(tickers))
+        sql = f"""
+            SELECT date, ticker, adj_close as close
+            FROM prices
+            WHERE ticker IN ({ticker_placeholders})
+            AND date BETWEEN ? AND ?
+            ORDER BY date, ticker
+        """
+        params = [*tickers, start_date, end_date]
         with get_db() as conn:
-            placeholders = ", ".join([f"'{t}'" for t in tickers])
-            df = conn.execute(
-                f"""
-                SELECT date, ticker, adj_close as close
-                FROM prices
-                WHERE ticker IN ({placeholders})
-                AND date BETWEEN '{start_date}' AND '{end_date}'
-                ORDER BY date, ticker
-                """
-            ).fetchdf()
+            df = conn.execute(sql, params).fetchdf()
         pivot = df.pivot(index="date", columns="ticker", values="close")
         pivot.index = pd.to_datetime(pivot.index)
         return pivot.dropna()
@@ -228,7 +251,8 @@ class DashboardBacktestRunner:
             mda_importance = dict(
                 zip(
                     meta_result.feature_names,
-                    meta_result.model.feature_importances_, strict=False,
+                    meta_result.model.feature_importances_,
+                    strict=False,
                 )
             )
             caveats.append("Meta-label RF trained on signal features; not a deep model")
