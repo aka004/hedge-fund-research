@@ -286,9 +286,15 @@ def compare_to_benchmark(
         / cov_matrix.loc["benchmark", "benchmark"]
     )
 
-    excess_strategy = aligned["strategy"].mean() * 252
-    excess_benchmark = aligned["benchmark"].mean() * 252
-    alpha = excess_strategy - beta * excess_benchmark
+    # Jensen's alpha: r_s - rf - β · (r_b - rf). The prior version
+    # omitted the rf term on both legs, so alpha was off by ~rf·(1-β)
+    # annually — making any near-zero-alpha strategy look like an
+    # alpha generator.
+    annual_strategy = aligned["strategy"].mean() * 252
+    annual_benchmark = aligned["benchmark"].mean() * 252
+    alpha = (annual_strategy - risk_free_rate) - beta * (
+        annual_benchmark - risk_free_rate
+    )
 
     # Information ratio
     tracking_error = (aligned["strategy"] - aligned["benchmark"]).std() * np.sqrt(252)
