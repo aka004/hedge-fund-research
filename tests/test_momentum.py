@@ -172,23 +172,31 @@ class TestMomentumLogic:
 class TestMomentumCoverage:
     """Test momentum signal coverage across universe."""
 
-    def test_generates_signals_for_most_symbols(self, momentum_signal, cached_symbols):
-        """Test that signals are generated for most cached symbols."""
+    def test_generates_signals_for_filter_passers(
+        self, momentum_signal, cached_symbols
+    ):
+        """Some non-trivial fraction of cached symbols should pass the
+        momentum + MA filter. The signal generator only emits Signals
+        for stocks that pass; failing stocks are excluded entirely (no
+        score=0.0 sentinel)."""
         signals = momentum_signal.generate(cached_symbols, TEST_DATE)
 
+        # At least 25% pass-rate is normal under typical market
+        # conditions; anything dramatically lower is suspicious.
         coverage = len(signals) / len(cached_symbols)
         assert (
-            coverage >= 0.90
-        ), f"Only {coverage:.1%} of symbols have signals, expected 90%+"
+            coverage >= 0.25
+        ), f"Only {coverage:.1%} of symbols passed the filter; expected ≥25%"
 
-    def test_some_stocks_pass_filter(self, momentum_signal, cached_symbols):
-        """Test that some stocks pass the momentum filter."""
+    def test_emitted_signals_all_pass_filter(self, momentum_signal, cached_symbols):
+        """All emitted signals must have positive score (failing-filter
+        stocks must not appear in the output)."""
         signals = momentum_signal.generate(cached_symbols, TEST_DATE)
-        passing = [s for s in signals if s.score > 0]
-
-        # At least 20% should pass in normal market conditions
-        pass_rate = len(passing) / len(signals)
-        assert pass_rate >= 0.20, f"Only {pass_rate:.1%} passing, expected at least 20%"
+        for s in signals:
+            assert s.score > 0, (
+                f"{s.symbol}: emitted with score={s.score}; failing-filter "
+                f"stocks must be excluded from the output"
+            )
 
     def test_signals_have_ranks(self, momentum_signal, cached_symbols):
         """Test that all signals have ranks assigned."""
@@ -255,7 +263,9 @@ class TestMomentumPerformance:
         elapsed = time.time() - start
 
         assert elapsed < 10, f"Signal generation took {elapsed:.1f}s, expected <10s"
-        assert len(signals) > 400, f"Only {len(signals)} signals generated"
+        # Filter-passing rate is market-regime-dependent; we just want
+        # to confirm a non-trivial number of signals come through.
+        assert len(signals) > 100, f"Only {len(signals)} signals generated"
 
 
 # =============================================================================
