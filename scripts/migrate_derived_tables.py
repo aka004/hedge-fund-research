@@ -6,9 +6,11 @@ These tables store backtest results, signals, portfolio weights,
 and AFML validation metrics produced by the backtesting pipeline.
 
 Usage:
-    python scripts/migrate_derived_tables.py
+    python scripts/migrate_derived_tables.py            # apply
+    python scripts/migrate_derived_tables.py --dry-run  # show SQL only
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -166,11 +168,31 @@ def check_db_reachable(db_path: Path) -> bool:
 
 
 def migrate():
-    """Create all derived tables."""
+    """Create all derived tables.
+
+    All DDL statements run inside a single transaction so a partial
+    failure rolls back any tables already created. `--dry-run` prints
+    the SQL without touching the database.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print DDL without executing or opening the database",
+    )
+    args = parser.parse_args()
+
     db_path = RESEARCH_DB_PATH
 
     logger.info(f"Database path: {db_path}")
     logger.info(f"Resolved path: {db_path.resolve()}")
+
+    if args.dry_run:
+        logger.info("--- DRY RUN: would execute the following DDL ---")
+        for table_name, ddl in DERIVED_TABLES.items():
+            logger.info("\n-- %s\n%s;", table_name, ddl.strip())
+        logger.info("--- end DRY RUN ---")
+        return
 
     if not check_db_reachable(db_path):
         logger.error("Database is not reachable. Aborting.")
@@ -178,24 +200,35 @@ def migrate():
 
     conn = duckdb.connect(str(db_path), read_only=False)
     created = []
-
-    for table_name, ddl in DERIVED_TABLES.items():
-        try:
+    try:
+        # Wrap all DDL in one transaction so any failure rolls back
+        # the tables that succeeded earlier in the loop. Without this,
+        # a partial run leaves the schema in an indeterminate state.
+        conn.execute("BEGIN TRANSACTION")
+        for table_name, ddl in DERIVED_TABLES.items():
             conn.execute(ddl)
             created.append(table_name)
             logger.info(f"OK  {table_name}")
-        except Exception as e:
-            logger.error(f"FAIL  {table_name}: {e}")
-
-    conn.close()
+        conn.execute("COMMIT")
+    except Exception as e:
+        conn.execute("ROLLBACK")
+        logger.error("Migration failed; rolled back. Error: %s", e)
+        # `created` reflects what was attempted; nothing persisted.
+        logger.error(
+            "Attempted (rolled back): %s",
+            ", ".join(created) if created else "<none>",
+        )
+        conn.close()
+        sys.exit(1)
+    finally:
+        if not conn.closed if hasattr(conn, "closed") else True:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     logger.info(f"\nCreated {len(created)}/{len(DERIVED_TABLES)} derived tables.")
-    if len(created) == len(DERIVED_TABLES):
-        logger.info("Migration complete.")
-    else:
-        missing = set(DERIVED_TABLES) - set(created)
-        logger.error(f"Failed tables: {', '.join(missing)}")
-        sys.exit(1)
+    logger.info("Migration complete.")
 
 
 if __name__ == "__main__":
