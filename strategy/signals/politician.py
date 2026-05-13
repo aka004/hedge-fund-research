@@ -43,8 +43,10 @@ class PoliticianSignal(SignalGenerator):
         self.price_storage = price_storage
         self.lookback_days = lookback_days or POLITICIAN_SIGNAL_LOOKBACK_DAYS
 
-        # Cache for politician performance metrics
-        self._performance_cache: dict[str, float] = {}
+        # Cache keyed on (politician_name, as_of_date) so historical
+        # simulations don't reuse a win rate computed at a different
+        # point in time. See _get_politician_win_rate.
+        self._performance_cache: dict[tuple[str, date], float] = {}
 
     @property
     def name(self) -> str:
@@ -99,7 +101,7 @@ class PoliticianSignal(SignalGenerator):
                 score = self._calculate_buy_signal_strength(
                     politician_name, shares, price, transaction_date, as_of_date
                 )
-                
+
                 signals.append(
                     Signal(
                         symbol=symbol,
@@ -120,7 +122,7 @@ class PoliticianSignal(SignalGenerator):
                 score = self._calculate_sell_signal_strength(
                     politician_name, shares, price, transaction_date, as_of_date
                 )
-                
+
                 signals.append(
                     Signal(
                         symbol=symbol,
@@ -166,8 +168,9 @@ class PoliticianSignal(SignalGenerator):
         # Base score (neutral buy)
         base_score = 0.5
 
-        # Boost by politician's win rate
-        win_rate = self._get_politician_win_rate(politician_name)
+        # Boost by politician's win rate AS OF as_of_date (prevents
+        # future trade outcomes from leaking into today's signal).
+        win_rate = self._get_politician_win_rate(politician_name, as_of_date)
         win_rate_boost = win_rate / 100.0 * 0.3  # Up to +0.3 boost
 
         # Boost by trade size (larger = more conviction)
@@ -208,33 +211,37 @@ class PoliticianSignal(SignalGenerator):
         buy_strength = self._calculate_buy_signal_strength(
             politician_name, shares, price, transaction_date, as_of_date
         )
-        
+
         # Convert to sell signal (negative)
         return -buy_strength
 
-    def _get_politician_win_rate(self, politician_name: str) -> float:
-        """Get politician's historical win rate.
+    def _get_politician_win_rate(self, politician_name: str, as_of_date: date) -> float:
+        """Get politician's historical win rate as of as_of_date.
 
         Args:
             politician_name: Name of politician
+            as_of_date: Cutoff date — trades after this are excluded so
+                that historical simulations don't see future outcomes.
 
         Returns:
             Win rate as percentage (0-100)
         """
-        # Check cache first
-        if politician_name in self._performance_cache:
-            return self._performance_cache[politician_name]
+        cache_key = (politician_name, as_of_date)
+        if cache_key in self._performance_cache:
+            return self._performance_cache[cache_key]
 
         # Calculate win rate from historical performance
         try:
             from analysis.politician_tracker import PoliticianTracker
 
             tracker = PoliticianTracker(self.trade_storage, self.price_storage)
-            performance = tracker.calculate_performance(politician_name)
+            performance = tracker.calculate_performance(
+                politician_name, end_date=as_of_date
+            )
             win_rate = performance.win_rate
 
             # Cache result
-            self._performance_cache[politician_name] = win_rate
+            self._performance_cache[cache_key] = win_rate
 
             return win_rate
         except Exception as e:
