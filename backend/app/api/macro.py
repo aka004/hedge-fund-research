@@ -16,8 +16,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/macro", tags=["macro"])
 
 
+# Handlers are intentionally `def`, not `async def`. The service layer
+# uses synchronous FRED / yfinance HTTP calls, DuckDB I/O, and the
+# Anthropic SDK — all blocking. Declaring them `async def` would freeze
+# the FastAPI event loop for seconds at a time; with plain `def` FastAPI
+# auto-routes the work onto its threadpool.
+
+
 @router.get("/indicators")
-async def get_indicators():
+def get_indicators():
     """Get all macro indicators with current values and signals."""
     try:
         return get_all_indicators_data()  # ensure_tables() called inside
@@ -27,7 +34,7 @@ async def get_indicators():
 
 
 @router.get("/history/{indicator_id}")
-async def get_history(
+def get_history(
     indicator_id: str,
     range: str = Query(default="2Y", regex="^(1Y|2Y|5Y|MAX)$"),
 ):
@@ -47,7 +54,7 @@ async def get_history(
 
 
 @router.get("/verdict")
-async def get_verdict(refresh: bool = Query(default=False)):
+def get_verdict(refresh: bool = Query(default=False)):
     """Get AI-generated macro verdict."""
     try:
         if not refresh:
