@@ -3,7 +3,6 @@
 import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Optional
 
 import pandas as pd
 
@@ -24,10 +23,10 @@ class PoliticianPerformance:
     win_rate: float  # Percentage of profitable trades
     avg_return: float  # Average return per trade
     avg_holding_period_days: float  # Average days held
-    sharpe_ratio: Optional[float] = None  # Sharpe ratio if sufficient trades
+    sharpe_ratio: float | None = None  # Sharpe ratio if sufficient trades
     total_return: float = 0.0  # Total cumulative return
-    best_trade_return: Optional[float] = None
-    worst_trade_return: Optional[float] = None
+    best_trade_return: float | None = None
+    worst_trade_return: float | None = None
     # Filing delay metrics (STOCK Act compliance)
     avg_filing_delay_days: float = 0.0  # Average days between trade and disclosure
     max_filing_delay_days: int = 0  # Longest delay (suspicious if >45 days)
@@ -86,11 +85,17 @@ class PoliticianTracker:
             )
 
         # Separate buy and sell trades
-        buy_trades = trades[trades["transaction_type"].str.contains("Buy|P", case=False, na=False)]
-        sell_trades = trades[trades["transaction_type"].str.contains("Sell|S", case=False, na=False)]
+        buy_trades = trades[
+            trades["transaction_type"].str.contains("Buy|P", case=False, na=False)
+        ]
+        sell_trades = trades[
+            trades["transaction_type"].str.contains("Sell|S", case=False, na=False)
+        ]
 
-        # Calculate returns for each trade
-        trade_returns = self._calculate_trade_returns(trades)
+        # Calculate returns for each trade. Pass end_date so open
+        # positions are marked-to-market at the analysis cutoff and not
+        # at today's date (look-ahead bias during historical analysis).
+        trade_returns = self._calculate_trade_returns(trades, end_date=end_date)
 
         # Calculate filing delay metrics
         delay_metrics = self._calculate_filing_delays(trades)
@@ -110,7 +115,11 @@ class PoliticianTracker:
             worst_return = None
         else:
             profitable = trade_returns[trade_returns["return"] > 0]
-            win_rate = len(profitable) / len(trade_returns) * 100 if len(trade_returns) > 0 else 0.0
+            win_rate = (
+                len(profitable) / len(trade_returns) * 100
+                if len(trade_returns) > 0
+                else 0.0
+            )
             avg_return = trade_returns["return"].mean() * 100  # Convert to percentage
             avg_holding_period = trade_returns["holding_period_days"].mean()
             total_return = trade_returns["return"].sum() * 100
@@ -147,17 +156,25 @@ class PoliticianTracker:
             late_filings_pct=delay_metrics["late_pct"],
         )
 
-    def _calculate_trade_returns(self, trades: pd.DataFrame) -> pd.DataFrame:
+    def _calculate_trade_returns(
+        self, trades: pd.DataFrame, end_date: date | None = None
+    ) -> pd.DataFrame:
         """Calculate returns for each trade by matching buys with sells.
 
         Args:
             trades: DataFrame with trades
+            end_date: Cutoff for marking open positions to market. When
+                running a historical analysis this MUST be supplied so
+                that open positions aren't priced at today's date — that
+                would be a look-ahead leak.
 
         Returns:
             DataFrame with calculated returns
         """
         if trades.empty or "symbol" not in trades.columns:
             return pd.DataFrame()
+
+        mark_to_market_date = end_date if end_date is not None else date.today()
 
         returns_data = []
 
@@ -167,10 +184,14 @@ class PoliticianTracker:
 
             # Match buys with sells
             buys = symbol_trades[
-                symbol_trades["transaction_type"].str.contains("Buy|P", case=False, na=False)
+                symbol_trades["transaction_type"].str.contains(
+                    "Buy|P", case=False, na=False
+                )
             ]
             sells = symbol_trades[
-                symbol_trades["transaction_type"].str.contains("Sell|S", case=False, na=False)
+                symbol_trades["transaction_type"].str.contains(
+                    "Sell|S", case=False, na=False
+                )
             ]
 
             for _, buy in buys.iterrows():
@@ -184,11 +205,13 @@ class PoliticianTracker:
                 # Find matching sell (next sell after buy)
                 matching_sells = sells[sells["transaction_date"] > buy_date]
                 if matching_sells.empty:
-                    # No sell yet - use current price if available
-                    current_price = self._get_current_price(symbol, buy_date)
+                    # No sell yet — mark to market at the analysis
+                    # cutoff (not date.today(), which would be future
+                    # look-ahead during historical analysis).
+                    current_price = self._get_current_price(symbol, mark_to_market_date)
                     if current_price:
                         exit_price = current_price
-                        exit_date = date.today()
+                        exit_date = mark_to_market_date
                     else:
                         continue  # Skip if we can't determine exit
                 else:
@@ -204,15 +227,17 @@ class PoliticianTracker:
                 return_pct = (exit_price - buy_price) / buy_price
                 holding_period = (exit_date - buy_date).days
 
-                returns_data.append({
-                    "symbol": symbol,
-                    "buy_date": buy_date,
-                    "sell_date": exit_date,
-                    "buy_price": buy_price,
-                    "sell_price": exit_price,
-                    "return": return_pct,
-                    "holding_period_days": holding_period,
-                })
+                returns_data.append(
+                    {
+                        "symbol": symbol,
+                        "buy_date": buy_date,
+                        "sell_date": exit_date,
+                        "buy_price": buy_price,
+                        "sell_price": exit_price,
+                        "return": return_pct,
+                        "holding_period_days": holding_period,
+                    }
+                )
 
         if not returns_data:
             return pd.DataFrame()
@@ -233,7 +258,11 @@ class PoliticianTracker:
             prices = self.price_storage.load_prices(
                 symbol, start_date=as_of_date, end_date=as_of_date
             )
-            if prices is not None and not prices.empty and "adj_close" in prices.columns:
+            if (
+                prices is not None
+                and not prices.empty
+                and "adj_close" in prices.columns
+            ):
                 return float(prices.iloc[0]["adj_close"])
         except Exception as e:
             logger.debug(f"Could not get price for {symbol} on {as_of_date}: {e}")
@@ -258,8 +287,13 @@ class PoliticianTracker:
             }
 
         # Check if we have both date columns
-        if "transaction_date" not in trades.columns or "disclosure_date" not in trades.columns:
-            logger.warning("Missing transaction_date or disclosure_date for delay calculation")
+        if (
+            "transaction_date" not in trades.columns
+            or "disclosure_date" not in trades.columns
+        ):
+            logger.warning(
+                "Missing transaction_date or disclosure_date for delay calculation"
+            )
             return {
                 "avg_delay": 0.0,
                 "max_delay": 0,
@@ -293,7 +327,11 @@ class PoliticianTracker:
             "avg_delay": float(valid_delays.mean()),
             "max_delay": int(valid_delays.max()),
             "late_count": len(late_filings),
-            "late_pct": (len(late_filings) / len(valid_delays) * 100) if len(valid_delays) > 0 else 0.0,
+            "late_pct": (
+                (len(late_filings) / len(valid_delays) * 100)
+                if len(valid_delays) > 0
+                else 0.0
+            ),
         }
 
     def get_suspicious_trades(
@@ -329,19 +367,22 @@ class PoliticianTracker:
             return pd.DataFrame()
 
         # Calculate filing delay
-        if "transaction_date" not in trades.columns or "disclosure_date" not in trades.columns:
+        if (
+            "transaction_date" not in trades.columns
+            or "disclosure_date" not in trades.columns
+        ):
             logger.warning("Missing date columns for suspicious trade detection")
             return pd.DataFrame()
 
         trans_dates = pd.to_datetime(trades["transaction_date"])
         disc_dates = pd.to_datetime(trades["disclosure_date"])
-        
+
         trades = trades.copy()
         trades["filing_delay_days"] = (disc_dates - trans_dates).dt.days
 
         # Filter for suspicious delays
         suspicious = trades[trades["filing_delay_days"] > delay_threshold_days]
-        
+
         # Sort by delay (longest first)
         if not suspicious.empty:
             suspicious = suspicious.sort_values("filing_delay_days", ascending=False)
