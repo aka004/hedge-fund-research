@@ -16,12 +16,15 @@ Usage:
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import argparse
 import logging
-from config import RESEARCH_DB_PATH
+
 import duckdb
+
+from config import RESEARCH_DB_PATH
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,22 +36,23 @@ logger = logging.getLogger(__name__)
 
 def migrate_schema(db_path: Path, dry_run: bool = False):
     """Migrate database to screener schema."""
-    
+
     logger.info(f"{'[DRY RUN] ' if dry_run else ''}Migrating schema at {db_path}")
-    
+
     if not db_path.exists():
         logger.error(f"Database not found at {db_path}")
         logger.info("Run scripts/setup_research_db.py first to initialize")
         return False
-    
+
     con = duckdb.connect(str(db_path))
-    
+
     migrations = []
-    
+
     # ============================================================
     # 1. Create stocks table (company master)
     # ============================================================
-    migrations.append("""
+    migrations.append(
+        """
     CREATE TABLE IF NOT EXISTS stocks (
         ticker VARCHAR PRIMARY KEY,
         name VARCHAR NOT NULL,
@@ -64,20 +68,27 @@ def migrate_schema(db_path: Path, dry_run: bool = False):
         is_active BOOLEAN DEFAULT TRUE,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
-    """)
-    
+    """
+    )
+
     # ============================================================
     # 2. Extend fundamentals table
     # ============================================================
     # Check existing columns first
-    existing_cols = con.execute("""
+    existing_cols = (
+        con.execute(
+            """
         SELECT column_name 
         FROM information_schema.columns 
         WHERE table_name = 'fundamentals'
-    """).fetchdf()['column_name'].tolist()
-    
+    """
+        )
+        .fetchdf()["column_name"]
+        .tolist()
+    )
+
     logger.info(f"Existing fundamentals columns: {len(existing_cols)}")
-    
+
     # Add missing columns
     new_columns = [
         ("roe", "DOUBLE", "Return on Equity"),
@@ -113,21 +124,24 @@ def migrate_schema(db_path: Path, dry_run: bool = False):
         ("shareholders_equity", "DOUBLE", "Shareholders' Equity"),
         ("shares_outstanding", "BIGINT", "Shares Outstanding"),
     ]
-    
+
     for col_name, col_type, description in new_columns:
         if col_name not in existing_cols:
             # Escape single quotes in description
             escaped_desc = description.replace("'", "''")
-            migrations.append(f"""
+            migrations.append(
+                f"""
             ALTER TABLE fundamentals ADD COLUMN {col_name} {col_type};
             COMMENT ON COLUMN fundamentals.{col_name} IS '{escaped_desc}';
-            """)
+            """
+            )
             logger.info(f"  + Adding column: {col_name} ({col_type})")
-    
+
     # ============================================================
     # 3. Create technicals table
     # ============================================================
-    migrations.append("""
+    migrations.append(
+        """
     CREATE TABLE IF NOT EXISTS technicals (
         ticker VARCHAR,
         date DATE,
@@ -161,12 +175,14 @@ def migrate_schema(db_path: Path, dry_run: bool = False):
         distance_sma_200 DOUBLE,
         PRIMARY KEY (ticker, date)
     );
-    """)
-    
+    """
+    )
+
     # ============================================================
     # 4. Create options_chain table
     # ============================================================
-    migrations.append("""
+    migrations.append(
+        """
     CREATE TABLE IF NOT EXISTS options_chain (
         ticker VARCHAR,
         fetch_date DATE,
@@ -189,12 +205,14 @@ def migrate_schema(db_path: Path, dry_run: bool = False):
         dte INTEGER,  -- days to expiration
         PRIMARY KEY (ticker, fetch_date, expiry, strike, option_type)
     );
-    """)
-    
+    """
+    )
+
     # ============================================================
     # 5. Create signals table
     # ============================================================
-    migrations.append("""
+    migrations.append(
+        """
     CREATE TABLE IF NOT EXISTS signals (
         ticker VARCHAR,
         date DATE,
@@ -205,12 +223,14 @@ def migrate_schema(db_path: Path, dry_run: bool = False):
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (ticker, date, signal_name)
     );
-    """)
-    
+    """
+    )
+
     # ============================================================
     # 6. Create screener_summary view
     # ============================================================
-    migrations.append("""
+    migrations.append(
+        """
     CREATE OR REPLACE VIEW screener_summary AS
     WITH latest_prices AS (
         SELECT 
@@ -304,8 +324,9 @@ def migrate_schema(db_path: Path, dry_run: bool = False):
     LEFT JOIN latest_fundamentals f ON s.ticker = f.ticker AND f.rn = 1
     LEFT JOIN latest_technicals t ON s.ticker = t.ticker AND t.rn = 1
     WHERE s.is_active = TRUE;
-    """)
-    
+    """
+    )
+
     # ============================================================
     # Execute migrations
     # ============================================================
@@ -316,27 +337,37 @@ def migrate_schema(db_path: Path, dry_run: bool = False):
             logger.info(sql.strip())
         logger.info("\n=== END DRY RUN ===")
         return True
-    
+
     try:
         for i, sql in enumerate(migrations, 1):
             logger.info(f"Running migration {i}/{len(migrations)}...")
             con.execute(sql)
-        
+
         con.commit()
         logger.info("✅ Migration completed successfully")
-        
+
         # Show table counts
-        tables = ['stocks', 'prices', 'fundamentals', 'technicals', 'options_chain', 'signals']
+        tables = [
+            "stocks",
+            "prices",
+            "fundamentals",
+            "technicals",
+            "options_chain",
+            "signals",
+        ]
         logger.info("\n=== Table Status ===")
         for table in tables:
             try:
                 count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 logger.info(f"  {table:20s}: {count:>10,d} rows")
-            except:
-                logger.info(f"  {table:20s}: (not yet created)")
-        
+            except Exception as e:
+                # Bare `except:` previously swallowed every exception
+                # (incl. KeyboardInterrupt). Log the real failure so a
+                # broken table doesn't masquerade as "not yet created".
+                logger.info(f"  {table:20s}: error — {e}")
+
         return True
-        
+
     except Exception as e:
         logger.error(f"❌ Migration failed: {e}")
         con.rollback()
@@ -347,11 +378,15 @@ def migrate_schema(db_path: Path, dry_run: bool = False):
 
 def main():
     parser = argparse.ArgumentParser(description="Migrate database to screener schema")
-    parser.add_argument("--dry-run", action="store_true", help="Show SQL without executing")
-    parser.add_argument("--db-path", type=Path, default=RESEARCH_DB_PATH, help="Database path")
-    
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show SQL without executing"
+    )
+    parser.add_argument(
+        "--db-path", type=Path, default=RESEARCH_DB_PATH, help="Database path"
+    )
+
     args = parser.parse_args()
-    
+
     success = migrate_schema(args.db_path, dry_run=args.dry_run)
     sys.exit(0 if success else 1)
 
