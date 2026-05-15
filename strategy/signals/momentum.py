@@ -90,15 +90,19 @@ class MomentumSignal(SignalGenerator):
                 above_ma = ma200 is not None and current_price > ma200
                 positive_momentum = momentum > 0
 
-                # Score: momentum return, but 0 if fails MA filter
-                score = momentum if (positive_momentum and above_ma) else 0.0
+                # Skip stocks that fail the filter rather than emitting
+                # score=0.0. A score-zero Signal is indistinguishable
+                # from a genuine near-zero-momentum stock and would
+                # distort the combined-signal ranking downstream.
+                if not (positive_momentum and above_ma):
+                    continue
 
                 signals.append(
                     Signal(
                         symbol=symbol,
                         date=as_of_date,
                         signal_name=self.name,
-                        score=score,
+                        score=momentum,
                         raw_value=momentum,
                         metadata={
                             "momentum_12_1": momentum,

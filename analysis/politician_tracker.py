@@ -124,14 +124,22 @@ class PoliticianTracker:
             avg_holding_period = trade_returns["holding_period_days"].mean()
             total_return = trade_returns["return"].sum() * 100
 
-            # Sharpe ratio (annualized) if we have enough trades
+            # Sharpe ratio (annualized) if we have enough trades.
+            # NOTE: these are sparse round-trip trade returns, not daily
+            # returns. Annualising with sqrt(252) would assume one trade
+            # per day and dramatically overstate the ratio. Use the
+            # actual trade frequency (252 / avg_holding_days).
             if len(trade_returns) >= 10:
                 returns_series = trade_returns["return"]
-                sharpe_ratio = (
-                    returns_series.mean() / returns_series.std() * (252**0.5)
-                    if returns_series.std() > 0
-                    else None
-                )
+                if returns_series.std() > 0 and avg_holding_period > 0:
+                    trades_per_year = 252.0 / float(avg_holding_period)
+                    sharpe_ratio = (
+                        returns_series.mean()
+                        / returns_series.std()
+                        * (trades_per_year**0.5)
+                    )
+                else:
+                    sharpe_ratio = None
             else:
                 sharpe_ratio = None
 

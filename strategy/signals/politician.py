@@ -138,8 +138,8 @@ class PoliticianSignal(SignalGenerator):
                     )
                 )
 
-        # Rank signals
-        self._rank_signals(signals)
+        # Rank signals — use the return value so the list is in rank order.
+        signals = self._rank_signals(signals)
 
         logger.info(f"Generated {len(signals)} politician signals for {as_of_date}")
 
