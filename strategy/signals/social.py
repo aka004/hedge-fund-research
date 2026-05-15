@@ -3,6 +3,8 @@
 import logging
 from datetime import date
 
+import pandas as pd  # noqa: F401  # used in as_of_date filter (line ~63)
+
 from data.storage.parquet import ParquetStorage
 from strategy.signals.base import Signal, SignalGenerator
 
@@ -54,7 +56,20 @@ class SocialSignal(SignalGenerator):
                 if sentiment_df is None or sentiment_df.empty:
                     continue
 
-                # Get most recent sentiment data
+                # Prevent look-ahead bias: only consider rows on or
+                # before as_of_date. load_sentiment returns the full
+                # cached history, so iloc[-1] alone would read the
+                # most recent row regardless of the simulation date.
+                if "date" in sentiment_df.columns:
+                    row_dates = pd.to_datetime(sentiment_df["date"]).dt.date
+                    sentiment_df = sentiment_df[row_dates <= as_of_date]
+                elif isinstance(sentiment_df.index, pd.DatetimeIndex):
+                    sentiment_df = sentiment_df[sentiment_df.index.date <= as_of_date]
+
+                if sentiment_df.empty:
+                    continue
+
+                # Get most recent sentiment data available as of as_of_date.
                 latest = sentiment_df.iloc[-1].to_dict()
 
                 message_count = latest.get("message_count", 0)
