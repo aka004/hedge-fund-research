@@ -7,6 +7,7 @@ train RF meta-label with Purged K-Fold -> apply AFML validation
 generate caveats -> persist to derived tables.
 """
 
+import logging
 import re
 import sys
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
@@ -540,6 +543,8 @@ class DashboardBacktestRunner:
 
             self.persistence.save_regime_history(_RegimeWrapper(regime_df), ref_prices)
         except Exception:
-            pass  # regime save is best-effort
+            # Regime save is best-effort, but a silent swallow makes
+            # dashboard regime-history 404s impossible to debug.
+            logger.warning("Regime save failed for run_id=%s", run_id, exc_info=True)
 
         return run_id

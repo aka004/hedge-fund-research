@@ -16,18 +16,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/macro", tags=["macro"])
 
 
+# Handlers are intentionally `def`, not `async def`. The service layer
+# uses synchronous FRED / yfinance HTTP calls, DuckDB I/O, and the
+# Anthropic SDK — all blocking. Declaring them `async def` would freeze
+# the FastAPI event loop for seconds at a time; with plain `def` FastAPI
+# auto-routes the work onto its threadpool.
+
+
 @router.get("/indicators")
-async def get_indicators():
+def get_indicators():
     """Get all macro indicators with current values and signals."""
     try:
         return get_all_indicators_data()  # ensure_tables() called inside
-    except Exception as e:
-        logger.error(f"Failed to fetch macro indicators: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to fetch macro indicators")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/history/{indicator_id}")
-async def get_history(
+def get_history(
     indicator_id: str,
     range: str = Query(default="2Y", regex="^(1Y|2Y|5Y|MAX)$"),
 ):
@@ -41,13 +48,13 @@ async def get_history(
         return data
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Failed to fetch history for {indicator_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to fetch history for %s", indicator_id)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/verdict")
-async def get_verdict(refresh: bool = Query(default=False)):
+def get_verdict(refresh: bool = Query(default=False)):
     """Get AI-generated macro verdict."""
     try:
         if not refresh:
@@ -56,6 +63,6 @@ async def get_verdict(refresh: bool = Query(default=False)):
                 return cached
         indicators = get_all_indicators_data()
         return generate_ai_verdict(indicators)
-    except Exception as e:
-        logger.error(f"Failed to generate verdict: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Failed to generate verdict")
+        raise HTTPException(status_code=500, detail="Internal server error")
